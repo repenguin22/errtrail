@@ -121,6 +121,44 @@ func TestJoinPublicFirstBranch(t *testing.T) {
 	}
 }
 
+func TestInspectTypedNilError(t *testing.T) {
+	// A typed-nil *Error stored in a non-nil error interface (the classic Go
+	// footgun) must not panic any of the inspection functions.
+	var e *Error      // nil pointer
+	var err error = e // non-nil interface holding a nil *Error
+	if err == nil {
+		t.Fatal("interface should be non-nil")
+	}
+
+	if got := CodeOf(err); got != Unknown {
+		t.Errorf("CodeOf(typed-nil) = %v, want Unknown", got)
+	}
+	if got := PublicMessage(err); got != "Internal Server Error" {
+		t.Errorf("PublicMessage(typed-nil) = %q, want %q", got, "Internal Server Error")
+	}
+	if got := Trace(err); got != nil {
+		t.Errorf("Trace(typed-nil) = %v, want nil", got)
+	}
+	if got := Attrs(err); got != nil {
+		t.Errorf("Attrs(typed-nil) = %v, want nil", got)
+	}
+}
+
+func TestInspectTypedNilNested(t *testing.T) {
+	// A real *Error whose cause is a typed-nil *Error must also be safe: the
+	// walk reaches the nil one and must skip it rather than dereference it.
+	var inner *Error
+	outer := Wrap(error(inner), "outer").WithCode(NotFound)
+
+	if got := CodeOf(outer); got != NotFound {
+		t.Errorf("CodeOf = %v, want NotFound", got)
+	}
+	// Only the outer (real) *Error contributes a frame.
+	if got := len(Trace(outer)); got != 1 {
+		t.Errorf("len(Trace) = %d, want 1", got)
+	}
+}
+
 func TestWalkThroughStdFmtChain(t *testing.T) {
 	inner := New(NotFound, "inner")
 	mid := fmt.Errorf("mid: %w", inner)

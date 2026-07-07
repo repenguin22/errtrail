@@ -224,6 +224,13 @@ func CodeOf(err error) Code
 // non-empty public message found. Falls back to
 // http.StatusText(CodeOf(err).HTTPStatus()) if none is set
 // (e.g. NotFound -> "Not Found"). Never falls back to an internal message.
+//
+// Note: http.StatusText returns "" for status codes it does not know —
+// notably Canceled (499) and any custom code mapped to a non-standard HTTP
+// status. For such a code with no explicitly-set public message,
+// PublicMessage (and therefore the gRPC message and the problem Detail/Title)
+// is the empty string. Set an explicit WithPublic on codes like these if a
+// client-facing message is required.
 func PublicMessage(err error) string
 
 // Trace returns the frames of every *Error in the chain, ordered from the
@@ -426,6 +433,7 @@ No interceptor is provided in v1 (it would end up tightly coupled to each servic
 | `CodeOf(fmt.Errorf("x"))` (no `*Error` present) | `Unknown` |
 | A chain built entirely with `Wrap` and no code set anywhere | Delegates to the innermost `*Error`'s code; `Unknown` if none has one |
 | `PublicMessage` when public is unset | Falls back to `http.StatusText(HTTPStatus)`. Never falls back to the internal msg |
+| `PublicMessage` on a code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | Returns `""` (so the gRPC message and the problem Detail/Title are empty too). Set `WithPublic` on these codes if a client message is needed |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |

@@ -14,7 +14,11 @@ import (
 // that's the caller's responsibility to avoid.
 func walk(err error, fn func(*Error) bool) bool {
 	for err != nil {
-		if e, ok := err.(*Error); ok {
+		// Guard against a typed-nil *Error stored in a non-nil error
+		// interface (the classic Go footgun): fn dereferences the *Error, so
+		// a nil one would panic. Skipping it is safe — its Unwrap returns nil,
+		// which ends the walk below.
+		if e, ok := err.(*Error); ok && e != nil {
 			if !fn(e) {
 				return false
 			}
@@ -58,6 +62,11 @@ func CodeOf(err error) Code {
 // non-empty public message found. If none is set, it falls back to
 // http.StatusText(CodeOf(err).HTTPStatus()). It never falls back to an
 // internal message.
+//
+// http.StatusText returns "" for statuses it does not know — notably Canceled
+// (499) and custom codes mapped to a non-standard HTTP status — so for those
+// codes with no explicit public message this returns "". Set WithPublic on
+// such codes if a client-facing message is required.
 func PublicMessage(err error) string {
 	if err == nil {
 		return ""
