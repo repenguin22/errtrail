@@ -18,8 +18,8 @@ jobs:
         # 1.22.x は go.mod の下限保証、stable は最新での回帰検知。
         go-version: ['1.22.x', 'stable']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
       - name: gofmt
@@ -43,8 +43,8 @@ jobs:
       run:
         working-directory: grpcerr
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
       - name: vet
