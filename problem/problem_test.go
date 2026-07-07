@@ -30,7 +30,7 @@ func TestFromWithPublic(t *testing.T) {
 }
 
 func TestFromDetailOmittedWhenEqualTitle(t *testing.T) {
-	// public 未設定 → PublicMessage は http.StatusText = "Not Found" = Title。
+	// public not set -> PublicMessage falls back to http.StatusText = "Not Found" = Title.
 	err := errtrail.New(errtrail.NotFound, "internal")
 	p := From(err)
 	if p.Detail != "" {
@@ -95,7 +95,7 @@ func TestWriteJSONTagOmitsEmptyType(t *testing.T) {
 	if _, ok := raw["type"]; ok {
 		t.Error("empty type should be omitted from JSON")
 	}
-	// code は常に出る。
+	// code should always be present.
 	if _, ok := raw["code"]; !ok {
 		t.Error("code should always be present")
 	}

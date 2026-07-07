@@ -2,9 +2,10 @@ package errtrail
 
 import "log/slog"
 
-// LogValue は slog.LogValuer の実装。エラーをグループ値として表現し、内部メッセージ・
-// コード・trace・付帯 attrs を構造化ログに載せる。public はログには含めない
-// (public はレスポンス生成専用であり、ログは内部向けのため)。
+// LogValue implements slog.LogValuer. It represents the error as a group
+// value carrying the internal message, code, trace, and any attached attrs
+// into structured logs. The public message is deliberately left out — it's
+// meant for response generation, not internal logs.
 func (e *Error) LogValue() slog.Value {
 	if e == nil {
 		return slog.Value{}

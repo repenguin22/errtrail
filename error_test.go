@@ -61,7 +61,8 @@ func TestUnwrapAndErrorsIs(t *testing.T) {
 }
 
 func TestErrorsAsThroughStdChain(t *testing.T) {
-	// errtrail → fmt.Errorf(%w) → errtrail の混在チェーンでも As が通ること。
+	// errors.As should work even through a mixed chain of
+	// errtrail -> fmt.Errorf(%w) -> errtrail.
 	inner := New(NotFound, "inner")
 	mid := fmt.Errorf("mid: %w", inner)
 	outer := Wrap(mid, "outer")
@@ -70,7 +71,7 @@ func TestErrorsAsThroughStdChain(t *testing.T) {
 	if !errors.As(outer, &target) {
 		t.Fatal("errors.As should find *Error")
 	}
-	// As は最も外側の *Error(outer)を拾う。
+	// As should find the outermost *Error (outer).
 	if target != outer {
 		t.Errorf("As found %v, want outer", target)
 	}
@@ -100,7 +101,7 @@ func TestImmutabilityWithPublic(t *testing.T) {
 
 func TestImmutabilityAttrsNoSharing(t *testing.T) {
 	e := New(Internal, "x").With(slog.String("a", "1"))
-	// e から 2 つ派生させ、片方の append がもう片方に漏れないこと。
+	// Derive two errors from e; appending to one must not leak into the other.
 	b := e.With(slog.String("b", "2"))
 	c := e.With(slog.String("c", "3"))
 

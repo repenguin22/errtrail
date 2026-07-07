@@ -1,6 +1,7 @@
-// Package problem は errtrail のエラーを RFC 9457 (Problem Details for HTTP APIs) の
-// JSON レスポンスへ変換する。内部メッセージ・attrs・trace は決して含めず、外部公開
-// メッセージ(errtrail.PublicMessage)のみをクライアントに返す。
+// Package problem converts errtrail errors into RFC 9457 (Problem Details
+// for HTTP APIs) JSON responses. It never includes the internal message,
+// attrs, or trace — clients only ever see the public message
+// (errtrail.PublicMessage).
 package problem
 
 import (
@@ -10,27 +11,29 @@ import (
 	"github.com/repenguin22/errtrail"
 )
 
-// Problem は RFC 9457 の Problem Details オブジェクト。Code は拡張メンバー
-// (RFC 9457 §3.2)で、errtrail の Code 名を機械可読な形でクライアントに伝える。
+// Problem is an RFC 9457 Problem Details object. Code is an extension
+// member (RFC 9457 §3.2) that conveys errtrail's Code name to clients in a
+// machine-readable form.
 type Problem struct {
-	Type   string `json:"type,omitempty"` // 省略時は "about:blank" 相当(RFC 準拠)。
+	Type   string `json:"type,omitempty"` // Omitted means "about:blank", per RFC.
 	Title  string `json:"title"`
 	Status int    `json:"status"`
 	Detail string `json:"detail,omitempty"`
 	Code   string `json:"code"`
 }
 
-// TypeURL は Code から type URI を導出するオプショナルなフック。設定する場合は
-// サーバ起動前に行うこと(起動後の書き込みは並行読み取りとレースする)。
+// TypeURL is an optional hook that derives a type URI from a Code. If you
+// set it, do so before the server starts — writing it afterward races with
+// concurrent reads.
 var TypeURL func(errtrail.Code) string
 
-// From は err から Problem を組み立てる。内部情報は含めない。
+// From builds a Problem from err. It never includes internal information.
 //
 //	Status = errtrail.CodeOf(err).HTTPStatus()
 //	Title  = http.StatusText(Status)
-//	Detail = errtrail.PublicMessage(err)(ただし Title と同一なら冗長回避のため空)
+//	Detail = errtrail.PublicMessage(err), or empty if it equals Title (avoids redundancy)
 //	Code   = errtrail.CodeOf(err).String()
-//	Type   = TypeURL が非 nil なら TypeURL(code)、nil なら空
+//	Type   = TypeURL(code) if TypeURL is set, otherwise empty
 func From(err error) Problem {
 	code := errtrail.CodeOf(err)
 	status := code.HTTPStatus()
@@ -53,8 +56,8 @@ func From(err error) Problem {
 	return p
 }
 
-// Write は From(err) を application/problem+json 形式で w に書き込む。
-// JSON エンコードに失敗した場合はステータス書き込み後にその error を返す。
+// Write writes From(err) to w as application/problem+json. If JSON encoding
+// fails, it writes the status and returns that error.
 func Write(w http.ResponseWriter, err error) error {
 	p := From(err)
 	body, mErr := json.Marshal(p)

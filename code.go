@@ -5,13 +5,14 @@ import (
 	"strconv"
 )
 
-// Code はエラーの分類。値 0–16 は gRPC の codes.Code と同一の意味・数値を持つ。
-// HTTP ステータスや gRPC ステータスは Code から変換テーブルで導出する。
+// Code classifies an error. Values 0–16 share the same meaning and numeric
+// value as gRPC's codes.Code. HTTP and gRPC statuses are derived from Code
+// via a lookup table.
 type Code uint32
 
-// 組み込みコード。0–16 は gRPC の codes.Code に一致する。
+// Built-in codes. 0–16 match gRPC's codes.Code.
 const (
-	OK                 Code = 0 // エラーなし。Error に設定することは想定しない。
+	OK                 Code = 0 // No error. Not expected to be set on an Error.
 	Canceled           Code = 1
 	Unknown            Code = 2
 	InvalidArgument    Code = 3
@@ -30,22 +31,24 @@ const (
 	Unauthenticated    Code = 16
 )
 
-// customCodeMin はカスタムコードの下限。0–99 は組み込み用に予約する。
+// customCodeMin is the lower bound for custom codes. 0–99 are reserved for
+// built-ins.
 const customCodeMin Code = 100
 
-// codeInfo は 1 つの Code のメタデータ。
+// codeInfo holds the metadata for a single Code.
 type codeInfo struct {
 	name       string
 	httpStatus int
 	grpcCode   uint32
 }
 
-// codes は Code から codeInfo への参照テーブル。
+// codes maps Code to codeInfo.
 //
-// このテーブルは init での組み込み投入と、Register による起動前の追記のみを
-// 想定しており、並行書き込みに対する保護は持たない。読み取り(String/HTTPStatus/
-// GRPCCode)はサーバ起動後に多数の goroutine から行われるが、起動前に書き込みが
-// 完了していれば安全である。
+// This table is only ever populated at init (for built-ins) and appended to
+// by Register before the server starts; it has no protection against
+// concurrent writes. Reads (String/HTTPStatus/GRPCCode) happen from many
+// goroutines after startup, which is safe as long as all writes finished
+// before that point.
 var codes = map[Code]codeInfo{
 	OK:                 {"OK", http.StatusOK, 0},
 	Canceled:           {"CANCELED", 499, 1},
@@ -66,10 +69,11 @@ var codes = map[Code]codeInfo{
 	Unauthenticated:    {"UNAUTHENTICATED", http.StatusUnauthorized, 16},
 }
 
-// Register はカスタムコードを登録する。init 関数内、またはサーバ起動前に呼ぶこと。
-// 起動後の呼び出しは他 goroutine の Code 読み取りとデータレースを起こす。
+// Register adds a custom code. Call it from an init function, or otherwise
+// before the server starts — calling it afterward races with other
+// goroutines reading Code.
 //
-// c が customCodeMin(100)未満、または既に登録済みの場合は panic する。
+// Panics if c is below customCodeMin (100), or if c is already registered.
 func Register(c Code, name string, httpStatus int, grpcCode uint32) {
 	if c < customCodeMin {
 		panic("errtrail: custom code must be >= 100, got " + strconv.FormatUint(uint64(c), 10))
@@ -80,8 +84,8 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32) {
 	codes[c] = codeInfo{name: name, httpStatus: httpStatus, grpcCode: grpcCode}
 }
 
-// String はコード名を返す。組み込みは "NOT_FOUND" 形式、未登録のカスタムコードは
-// "CODE(123)" 形式。
+// String returns the code's name, e.g. "NOT_FOUND" for built-ins or
+// "CODE(123)" for an unregistered custom code.
 func (c Code) String() string {
 	if info, ok := codes[c]; ok {
 		return info.name
@@ -89,7 +93,8 @@ func (c Code) String() string {
 	return "CODE(" + strconv.FormatUint(uint64(c), 10) + ")"
 }
 
-// HTTPStatus は対応する HTTP ステータスコードを返す。未登録コードは 500。
+// HTTPStatus returns the corresponding HTTP status code. Unregistered codes
+// return 500.
 func (c Code) HTTPStatus() int {
 	if info, ok := codes[c]; ok {
 		return info.httpStatus
@@ -97,9 +102,10 @@ func (c Code) HTTPStatus() int {
 	return http.StatusInternalServerError
 }
 
-// GRPCCode は対応する gRPC コードの数値を返す。0–16 は恒等、カスタムコードは
-// Register で指定された値、未登録は 2 (UNKNOWN)。grpc パッケージに依存しないよう
-// uint32 で返す。
+// GRPCCode returns the corresponding gRPC code as a number. 0–16 map to
+// themselves, custom codes return the value passed to Register, and
+// unregistered codes return 2 (UNKNOWN). Returned as uint32 so this package
+// need not depend on the grpc package.
 func (c Code) GRPCCode() uint32 {
 	if info, ok := codes[c]; ok {
 		return info.grpcCode

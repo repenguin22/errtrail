@@ -33,7 +33,7 @@ func TestFormatPlusV(t *testing.T) {
 
 	out := fmt.Sprintf("%+v", outer)
 
-	// 1 行目はメッセージ連結。
+	// The first line is the concatenated message.
 	if !strings.HasPrefix(out, "get profile: query user\n") {
 		t.Errorf("first line wrong:\n%s", out)
 	}
@@ -42,7 +42,7 @@ func TestFormatPlusV(t *testing.T) {
 	mustContain(t, out, "\n  attrs: user_id=42")
 	mustContain(t, out, "\n  trace:")
 
-	// trace 行は "Func (file:line): msg" 形式。
+	// Trace lines look like "Func (file:line): msg".
 	traceLine := regexp.MustCompile(`\n    \S+ \(.+:\d+\): get profile`)
 	if !traceLine.MatchString(out) {
 		t.Errorf("trace line for outer not found:\n%s", out)
@@ -50,7 +50,7 @@ func TestFormatPlusV(t *testing.T) {
 }
 
 func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
-	e := New(Internal, "boom") // public なし、attrs なし
+	e := New(Internal, "boom") // no public, no attrs
 	out := fmt.Sprintf("%+v", e)
 	if strings.Contains(out, "public:") {
 		t.Error("public line should be omitted when unset")
@@ -58,7 +58,7 @@ func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
 	if strings.Contains(out, "attrs:") {
 		t.Error("attrs line should be omitted when empty")
 	}
-	// trace は必ずある(New が 1 フレーム記録するため)。
+	// trace is always present, since New records one frame.
 	mustContain(t, out, "\n  trace:")
 	mustContain(t, out, "\n  code: INTERNAL")
 }

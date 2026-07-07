@@ -6,33 +6,36 @@ import (
 	"slices"
 )
 
-// Error は errtrail の中核となるエラー型。イミュータブルであり、生成後にフィールドを
-// 変更する API は持たない。With 系メソッドはシャローコピーを返すため、複数の
-// goroutine から同じ *Error を安全に共有・派生できる。
+// Error is errtrail's core error type. It is immutable — there is no API to
+// mutate a field after construction. The With* methods return shallow
+// copies, so a single *Error can be safely shared and derived from across
+// goroutines.
 type Error struct {
-	code   Code        // ゼロ値 OK は「未設定」。CodeOf は内側の Error に委譲する。
-	msg    string      // 内部メッセージ(ログ用)。クライアントには決して出さない。
-	public string      // 外部公開メッセージ。空なら未設定。
-	cause  error       // ラップした元エラー。nil 可。
-	pc     uintptr     // 記録した呼び出し元 1 フレーム(遅延解決)。0 は「なし」。
-	attrs  []slog.Attr // 構造化ログ用の属性。
+	code   Code        // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+	msg    string      // Internal message (for logs). Never shown to a client.
+	public string      // Public message shown to clients. Empty means unset.
+	cause  error       // The wrapped error. May be nil.
+	pc     uintptr     // One recorded caller frame (resolved lazily). 0 means "none".
+	attrs  []slog.Attr // Structured-logging attributes.
 }
 
-// New は新しいエラーを作る。呼び出し元 1 フレームを記録する。
+// New creates a new error, recording one caller frame.
 func New(code Code, msg string) *Error {
 	return &Error{code: code, msg: msg, pc: caller(1)}
 }
 
-// Newf は fmt.Sprintf 形式の New。%w は使えない(ラップは Wrap を使う)。
+// Newf is the fmt.Sprintf form of New. %w is not supported here (use Wrap to
+// wrap an error).
 func Newf(code Code, format string, args ...any) *Error {
 	return &Error{code: code, msg: fmt.Sprintf(format, args...), pc: caller(1)}
 }
 
-// Wrap は err をラップし、呼び出し元 1 フレームを記録する。code は未設定(OK)の
-// ままにし、CodeOf はチェーン内側の Code に委譲する。コードを付け替えたい場合は
-// Wrap(...).WithCode(c) を使う。
+// Wrap wraps err, recording one caller frame. The code is left unset (OK),
+// so CodeOf delegates to the Code further down the chain. To change the
+// code, use Wrap(...).WithCode(c).
 //
-// err == nil のときは nil を返す。これにより if err != nil を省いた呼び出しが安全になる。
+// Wrap returns nil when err is nil, so callers can skip the if err != nil
+// check.
 func Wrap(err error, msg string) *Error {
 	if err == nil {
 		return nil
@@ -40,7 +43,7 @@ func Wrap(err error, msg string) *Error {
 	return &Error{msg: msg, cause: err, pc: caller(1)}
 }
 
-// Wrapf は fmt.Sprintf 形式の Wrap。err == nil なら nil を返す。
+// Wrapf is the fmt.Sprintf form of Wrap. Returns nil when err is nil.
 func Wrapf(err error, format string, args ...any) *Error {
 	if err == nil {
 		return nil
@@ -48,7 +51,7 @@ func Wrapf(err error, format string, args ...any) *Error {
 	return &Error{msg: fmt.Sprintf(format, args...), cause: err, pc: caller(1)}
 }
 
-// WithCode はコードを差し替えたコピーを返す。フレームは再記録しない。
+// WithCode returns a copy with the code replaced. Does not record a new frame.
 func (e *Error) WithCode(c Code) *Error {
 	if e == nil {
 		return nil
@@ -58,7 +61,8 @@ func (e *Error) WithCode(c Code) *Error {
 	return &cp
 }
 
-// WithPublic は外部公開メッセージを設定したコピーを返す。フレームは再記録しない。
+// WithPublic returns a copy with the public message set. Does not record a
+// new frame.
 func (e *Error) WithPublic(msg string) *Error {
 	if e == nil {
 		return nil
@@ -68,21 +72,22 @@ func (e *Error) WithPublic(msg string) *Error {
 	return &cp
 }
 
-// With は slog.Attr を追加したコピーを返す。フレームは再記録しない。
+// With returns a copy with the given slog.Attr values appended. Does not
+// record a new frame.
 //
-// 例: e.With(slog.String("user_id", id), slog.Int("attempt", n))
+// Example: e.With(slog.String("user_id", id), slog.Int("attempt", n))
 func (e *Error) With(attrs ...slog.Attr) *Error {
 	if e == nil {
 		return nil
 	}
 	cp := *e
-	// 元スライスと基底配列を共有しないよう Clip してから append する。
+	// Clip before appending so the copy never shares a backing array with e.attrs.
 	cp.attrs = append(slices.Clip(e.attrs), attrs...)
 	return &cp
 }
 
-// Error は "msg: cause" を返す。cause が nil なら msg のみ。msg が空で cause が
-// あるときは cause.Error() のみ(余分なコロンを残さない)。
+// Error returns "msg: cause", or just msg if cause is nil. If msg is empty
+// and cause is set, it returns cause.Error() alone (no stray colon).
 func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
@@ -97,8 +102,8 @@ func (e *Error) Error() string {
 	}
 }
 
-// Unwrap はラップした元エラーを返す。標準の errors.Is / errors.As がチェーンを
-// 辿るために使う。
+// Unwrap returns the wrapped error, letting the standard errors.Is /
+// errors.As walk the chain.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil

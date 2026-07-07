@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-// sink はエスケープ解析による割り当て消去を防ぎ、実際のヒープ確保を計測させる。
+// sink prevents escape analysis from eliding the allocations, so the
+// benchmarks measure real heap usage.
 var sink error
 
 func BenchmarkNew(b *testing.B) {

@@ -34,11 +34,11 @@ func TestLogValueJSON(t *testing.T) {
 	if errObj["user_id"] != float64(42) {
 		t.Errorf("error.user_id = %v", errObj["user_id"])
 	}
-	// public はログに載せない。
+	// public must never appear in logs.
 	if _, exists := errObj["public"]; exists {
 		t.Error("public must not appear in logs")
 	}
-	// trace は文字列配列。
+	// trace is an array of strings.
 	tr, ok := errObj["trace"].([]any)
 	if !ok || len(tr) != 2 {
 		t.Errorf("error.trace = %v", errObj["trace"])

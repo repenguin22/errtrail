@@ -1,6 +1,7 @@
-// Package grpcerr は errtrail のエラーを gRPC の *status.Status へ変換する。
-// google.golang.org/grpc に依存するため、コアの errtrail とは別モジュールに分離して
-// いる。gRPC を使わない利用者はこのパッケージを import しなければ grpc 依存を負わない。
+// Package grpcerr converts errtrail errors into gRPC's *status.Status. It
+// depends on google.golang.org/grpc, so it's kept in a module separate from
+// the errtrail core — users who don't need gRPC never import this package
+// and never pull in that dependency.
 package grpcerr
 
 import (
@@ -9,13 +10,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ToStatus は err を *status.Status へ変換する。
+// ToStatus converts err to a *status.Status.
 //
 //	Code    = codes.Code(errtrail.CodeOf(err).GRPCCode())
 //	Message = errtrail.PublicMessage(err)
 //
-// err == nil のときは status.New(codes.OK, "") を返す。内部メッセージ・attrs・trace
-// は含めない。
+// Returns status.New(codes.OK, "") when err is nil. Never includes the
+// internal message, attrs, or trace.
 func ToStatus(err error) *status.Status {
 	if err == nil {
 		return status.New(codes.OK, "")
@@ -24,8 +25,8 @@ func ToStatus(err error) *status.Status {
 	return status.New(c, errtrail.PublicMessage(err))
 }
 
-// ToError は ToStatus(err).Err() を返す。gRPC ハンドラの return 用。
-// err == nil なら nil を返す。
+// ToError returns ToStatus(err).Err(), for returning directly from a gRPC
+// handler. Returns nil when err is nil.
 func ToError(err error) error {
 	if err == nil {
 		return nil

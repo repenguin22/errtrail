@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1.22.x は go.mod の下限保証、stable は最新での回帰検知。
+        # 1.22.x verifies the go.mod floor; stable catches regressions on the latest release.
         go-version: ['1.22.x', 'stable']
     steps:
       - uses: actions/checkout@v7

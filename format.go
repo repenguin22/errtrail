@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-// Format は fmt.Formatter の実装。
+// Format implements fmt.Formatter.
 //
-//	%s, %v  e.Error() と同一
-//	%q      引用符付きの e.Error()
-//	%+v     コード・public・attrs・trace を含む複数行形式
+//	%s, %v  same as e.Error()
+//	%q      quoted e.Error()
+//	%+v     multi-line form including code, public, attrs, and trace
 func (e *Error) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
@@ -25,12 +25,12 @@ func (e *Error) Format(s fmt.State, verb rune) {
 	case 'q':
 		io.WriteString(s, strconv.Quote(e.Error()))
 	default:
-		// 未知の verb は %v 相当にフォールバックする。
+		// Unknown verbs fall back to the %v form.
 		io.WriteString(s, e.Error())
 	}
 }
 
-// detailed は %+v の複数行出力を組み立てる。
+// detailed builds the multi-line %+v output.
 func (e *Error) detailed() string {
 	if e == nil {
 		return "<nil>"
@@ -67,8 +67,9 @@ func (e *Error) detailed() string {
 	return b.String()
 }
 
-// firstPublic は明示設定された public を外側から探す。フォールバック値は返さない
-// (%+v では public が明示されているときだけ行を出す仕様のため)。
+// firstPublic looks for an explicitly-set public message, outermost first.
+// It never returns a fallback value — %+v only prints the public line when
+// one was explicitly set.
 func firstPublic(err error) string {
 	msg := ""
 	walk(err, func(e *Error) bool {

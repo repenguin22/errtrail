@@ -5,11 +5,13 @@ import (
 	"net/http"
 )
 
-// walk は err から深さ優先で *Error を訪問する。訪問順は「自分 → Unwrap の順」で、
-// errors.Join のような Unwrap() []error は先頭ブランチを優先する。fn が false を
-// 返した時点で探索を打ち切る(戻り値も false)。
+// walk visits every *Error in err's chain depth-first: itself, then
+// Unwrap(). For a branching chain like errors.Join (Unwrap() []error), the
+// first branch is visited first. Stops as soon as fn returns false (and
+// returns false itself).
 //
-// 循環チェーンの検出はしない(標準 errors パッケージ同様、作った側の責任とする)。
+// Cyclic chains are not detected — as with the standard errors package,
+// that's the caller's responsibility to avoid.
 func walk(err error, fn func(*Error) bool) bool {
 	for err != nil {
 		if e, ok := err.(*Error); ok {
@@ -34,9 +36,9 @@ func walk(err error, fn func(*Error) bool) bool {
 	return true
 }
 
-// CodeOf は err のチェーンを外側から辿り、最初に見つかった code != OK の *Error の
-// Code を返す。err == nil なら OK、*Error が見つからない(または全て code 未設定)
-// なら Unknown を返す。
+// CodeOf walks err's chain from the outside in and returns the Code of the
+// first *Error whose code != OK. Returns OK if err is nil, and Unknown if no
+// *Error is found (or every *Error in the chain has an unset code).
 func CodeOf(err error) Code {
 	if err == nil {
 		return OK
@@ -52,9 +54,10 @@ func CodeOf(err error) Code {
 	return found
 }
 
-// PublicMessage はチェーンを外側から辿り、最初に見つかった非空の public を返す。
-// 見つからなければ http.StatusText(CodeOf(err).HTTPStatus()) を返す。
-// 内部メッセージには決してフォールバックしない。
+// PublicMessage walks err's chain from the outside in and returns the first
+// non-empty public message found. If none is set, it falls back to
+// http.StatusText(CodeOf(err).HTTPStatus()). It never falls back to an
+// internal message.
 func PublicMessage(err error) string {
 	if err == nil {
 		return ""
@@ -73,8 +76,9 @@ func PublicMessage(err error) string {
 	return http.StatusText(CodeOf(err).HTTPStatus())
 }
 
-// Trace はチェーン内の全 *Error のフレームを、外側(最後にラップした場所)から
-// 内側(発生源)の順で返す。*Error が無ければ nil。
+// Trace returns the frames of every *Error in err's chain, ordered from the
+// outermost (where it was last wrapped) to the innermost (where it
+// originated). Returns nil if no *Error is found.
 func Trace(err error) []Frame {
 	var frames []Frame
 	walk(err, func(e *Error) bool {
@@ -84,8 +88,9 @@ func Trace(err error) []Frame {
 	return frames
 }
 
-// Attrs はチェーン内の全 *Error の attrs を、外側から内側の順で連結して返す。
-// キーの重複除去はしない(slog 側の挙動に委ねる)。*Error が無ければ nil。
+// Attrs concatenates the attrs of every *Error in err's chain, from
+// outermost to innermost. Duplicate keys are not deduplicated (left to
+// slog's own behavior). Returns nil if no *Error is found.
 func Attrs(err error) []slog.Attr {
 	var attrs []slog.Attr
 	walk(err, func(e *Error) bool {

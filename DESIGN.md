@@ -1,65 +1,66 @@
 # errtrail — Design Spec
 
-Web サービス(HTTP / gRPC)向けの Go エラーライブラリ。
+A Go error library for web services (HTTP / gRPC).
 
 - Status: Draft v1
-- Module: `github.com/repenguin22/errtrail`(仮。公開先が決まったら変更)
-- Go: 1.22+(`log/slog` に依存するため 1.21 が下限。開発は 1.22 を前提とする)
+- Module: `github.com/repenguin22/errtrail`
+- Go: 1.22+ (1.21 is the floor imposed by `log/slog`; development targets 1.22)
 
 ---
 
-## 1. ゴールと非ゴール
+## 1. Goals and non-goals
 
-### ゴール
+### Goals
 
-1. **エラーコードを一次情報とする。** コードは gRPC の 16 種(`codes.Code`)に準拠した独自型 `Code` で表し、HTTP ステータス / gRPC ステータスへは変換テーブルで導出する。
-2. **コアは標準ライブラリのみに依存する。** gRPC の `*status.Status` への変換だけは別 go.mod のサブモジュール `grpcerr` に隔離する。
-3. **発生箇所と伝播パスの追跡。** `New` / `Wrap` のたびに呼び出し元 1 フレームだけを記録する。フルスタックトレースは取らない。
-4. **標準 `errors` パッケージと完全互換。** `errors.Is` / `errors.As` / `errors.Unwrap` / `errors.Join` と共存できる。
-5. **内部メッセージと外部公開メッセージの分離。** クライアントに返るのは明示的に設定した public message のみ。
-6. **構造化ログ連携。** `slog.LogValuer` を実装する。
-7. **RFC 9457 (Problem Details) での HTTP レスポンス生成**をサブパッケージ `problem` で提供する。
+1. **Error codes are the source of truth.** Codes are represented by a custom `Code` type aligned with gRPC's 16 codes (`codes.Code`); HTTP and gRPC statuses are derived from it via a lookup table.
+2. **The core depends on the standard library only.** Only the conversion to gRPC's `*status.Status` is isolated in a separate go.mod submodule, `grpcerr`.
+3. **Track the origin and propagation path of an error.** `New` / `Wrap` each record just one caller frame. No full stack traces.
+4. **Fully compatible with the standard `errors` package.** Works alongside `errors.Is` / `errors.As` / `errors.Unwrap` / `errors.Join`.
+5. **Separate internal messages from public messages.** Only an explicitly-set public message is ever returned to a client.
+6. **Structured logging integration.** Implements `slog.LogValuer`.
+7. **RFC 9457 (Problem Details) HTTP response generation**, provided via the `problem` subpackage.
 
-### 非ゴール(v1 スコープ外)
+### Non-goals (out of scope for v1)
 
-- リトライ可否フラグ、ログレベルヒント等のメタデータ
-- gRPC の `errdetails`(BadRequest 等のリッチ詳細)
-- HTTP ステータス → `Code` の逆変換
-- gRPC インターセプタ、HTTP ミドルウェア
-- 多言語化(i18n)
+- Metadata such as a retryable flag or a log-level hint
+- gRPC's `errdetails` (rich details like BadRequest, etc.)
+- Reverse conversion from HTTP status back to `Code`
+- gRPC interceptors, HTTP middleware
+- Internationalization (i18n)
 
 ---
 
-## 2. パッケージ構成
+## 2. Package layout
 
 ```
 errtrail/
-├── go.mod                 // module github.com/repenguin22/errtrail(依存: 標準ライブラリのみ)
-├── code.go                // Code 型、定数、Register、HTTP/gRPC マッピング
-├── error.go               // Error 型、New/Newf/Wrap/Wrapf、ビルダーメソッド
-├── frame.go               // Frame 型、pc の記録と遅延解決
+├── go.mod                 // module github.com/repenguin22/errtrail (deps: stdlib only)
+├── code.go                // Code type, constants, Register, HTTP/gRPC mapping
+├── error.go               // Error type, New/Newf/Wrap/Wrapf, builder methods
+├── frame.go                // Frame type, pc recording and lazy resolution
 ├── inspect.go             // CodeOf, PublicMessage, Trace, Attrs
-├── format.go              // fmt.Formatter 実装
-├── slog.go                // slog.LogValuer 実装
+├── format.go              // fmt.Formatter implementation
+├── slog.go                // slog.LogValuer implementation
 ├── problem/
-│   └── problem.go         // RFC 9457(依存: 標準ライブラリのみ)
+│   └── problem.go         // RFC 9457 (deps: stdlib only)
 └── grpcerr/
-    ├── go.mod             // module github.com/repenguin22/errtrail/grpcerr(依存: google.golang.org/grpc)
+    ├── go.mod             // module github.com/repenguin22/errtrail/grpcerr (deps: google.golang.org/grpc)
     └── grpcerr.go
 ```
 
-`problem` は標準ライブラリのみで書けるためコアと同一モジュール。`grpcerr` のみ別モジュール。
+`problem` can be written using only the standard library, so it lives in the core module. Only `grpcerr` is a separate module.
 
 ---
 
-## 3. `Code` 型
+## 3. The `Code` type
 
 ```go
-// Code はエラーの分類。値 0–16 は gRPC の codes.Code と同一の意味・数値を持つ。
+// Code classifies an error. Values 0–16 share the same meaning and numeric
+// value as gRPC's codes.Code.
 type Code uint32
 
 const (
-    OK                 Code = 0  // エラーなし。Error に設定することは想定しない
+    OK                 Code = 0  // No error. Not expected to be set on an Error.
     Canceled           Code = 1
     Unknown            Code = 2
     InvalidArgument    Code = 3
@@ -79,27 +80,30 @@ const (
 )
 ```
 
-### 3.1 メソッド
+### 3.1 Methods
 
 ```go
-// String はコード名を返す。組み込みは "NOT_FOUND" 形式(gRPC 準拠の SCREAMING_SNAKE)。
-// 未登録のカスタムコードは "CODE(123)" 形式。
+// String returns the code's name — built-ins in "NOT_FOUND" form (gRPC's
+// SCREAMING_SNAKE convention). An unregistered custom code returns
+// "CODE(123)".
 func (c Code) String() string
 
-// HTTPStatus は対応する HTTP ステータスコードを返す。未登録コードは 500。
+// HTTPStatus returns the corresponding HTTP status code. Unregistered codes
+// return 500.
 func (c Code) HTTPStatus() int
 
-// GRPCCode は対応する gRPC コードの数値を返す。0–16 は恒等、
-// カスタムコードは Register で指定された値、未登録は 2 (UNKNOWN)。
-// grpc パッケージに依存しないよう uint32 で返す。
+// GRPCCode returns the corresponding gRPC code as a number. 0–16 map to
+// themselves, custom codes return the value passed to Register, and
+// unregistered codes return 2 (UNKNOWN). Returned as uint32 so this package
+// need not depend on the grpc package.
 func (c Code) GRPCCode() uint32
 ```
 
-### 3.2 HTTP マッピングテーブル(組み込み分)
+### 3.2 HTTP mapping table (built-ins)
 
-gRPC 公式の HTTP マッピング(grpc-gateway 準拠)をそのまま採用する。
+Adopts gRPC's official HTTP mapping as-is (aligned with grpc-gateway).
 
-| Code | 名前 | HTTP |
+| Code | Name | HTTP |
 |---|---|---|
 | 0 | OK | 200 |
 | 1 | CANCELED | 499 |
@@ -119,109 +123,117 @@ gRPC 公式の HTTP マッピング(grpc-gateway 準拠)をそのまま採用す
 | 15 | DATA_LOSS | 500 |
 | 16 | UNAUTHENTICATED | 401 |
 
-### 3.3 カスタムコードの登録
+### 3.3 Registering custom codes
 
 ```go
-// Register はカスタムコードを登録する。init 時(サービス起動前)に呼ぶことを想定し、
-// 登録処理自体は並行安全にしない(内部 map への素の書き込み。読み取りは起動後のみと規定)。
-// c < 100、または登録済みコードとの重複は panic。
+// Register adds a custom code. Intended to be called at init time (before
+// the service starts); registration itself is not made concurrency-safe
+// (a plain write to an internal map — reads are specified to only happen
+// after startup).
+// Panics if c < 100, or if the code is already registered.
 func Register(c Code, name string, httpStatus int, grpcCode uint32)
 ```
 
-- 0–99 は予約(現状 0–16 のみ使用、将来の組み込み追加用に確保)。カスタムは 100 以上。
-- 実装は `map[Code]codeInfo`(`codeInfo{name string; httpStatus int; grpcCode uint32}`)のパッケージ変数。組み込み 17 種も同じ map に初期投入し、lookup を一本化する。
-- doc comment に「`Register` は `init` またはサーバ起動前に呼ぶこと。起動後の呼び出しはデータレース」と明記する。
+- 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
+- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32}`). The 17 built-ins are seeded into the same map at init, so lookups go through a single path.
+- The doc comment states explicitly: "call `Register` from `init` or before the server starts. Calling it afterward is a data race."
 
 ---
 
-## 4. `Error` 型
+## 4. The `Error` type
 
 ```go
 type Error struct {
-    code   Code        // ゼロ値 OK は「未設定」を意味し、CodeOf では内側の Error に委譲する
-    msg    string      // 内部メッセージ(ログ用)。クライアントには決して出さない
-    public string      // 外部公開メッセージ。空なら未設定
-    cause  error       // ラップした元エラー。nil 可
-    pc     uintptr     // 記録した呼び出し元 1 フレーム(遅延解決)。0 は「なし」
-    attrs  []slog.Attr // 構造化ログ用の属性
+    code   Code        // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+    msg    string      // Internal message (for logs). Never shown to a client.
+    public string      // Public message shown to clients. Empty means unset.
+    cause  error       // The wrapped error. May be nil.
+    pc     uintptr     // One recorded caller frame (resolved lazily). 0 means "none".
+    attrs  []slog.Attr // Structured-logging attributes.
 }
 ```
 
-**イミュータブル**: 生成後にフィールドを変更する API は提供しない。`With*` 系はすべてシャローコピーを返す。したがって並行アクセスに対して安全。
+**Immutable**: no API mutates a field after construction. Every `With*` method returns a shallow copy, so it's safe under concurrent access.
 
-### 4.1 コンストラクタ
+### 4.1 Constructors
 
 ```go
-// New は新しいエラーを作る。呼び出し元 1 フレームを記録する。
+// New creates a new error, recording one caller frame.
 func New(code Code, msg string) *Error
 
-// Newf は fmt.Sprintf 形式の New。%w は使えない(ラップは Wrap を使う)。
+// Newf is the fmt.Sprintf form of New. %w is not supported here (use Wrap
+// to wrap an error).
 func Newf(code Code, format string, args ...any) *Error
 
-// Wrap は err をラップし、呼び出し元 1 フレームを記録する。
-// code は未設定(OK)のままにし、CodeOf はチェーン内側の Code に委譲する。
-// コードを付け替えたい場合は Wrap(...).WithCode(c) を使う。
-// err == nil のとき nil を返す(if err != nil を省いた呼び出しを安全にする)。
+// Wrap wraps err, recording one caller frame.
+// The code is left unset (OK), so CodeOf delegates to the Code further
+// down the chain. To change the code, use Wrap(...).WithCode(c).
+// Returns nil when err is nil (so callers can skip the if err != nil check).
 func Wrap(err error, msg string) *Error
 
-// Wrapf は fmt.Sprintf 形式の Wrap。同じく err == nil なら nil。
+// Wrapf is the fmt.Sprintf form of Wrap. Likewise returns nil when err is nil.
 func Wrapf(err error, format string, args ...any) *Error
 ```
 
-フレーム記録は `runtime.Callers(2, pc[:1])` で pc を 1 つだけ取得して保持する。`file:line` への解決は表示時まで遅延する(`runtime.CallersFrames`)。これにより生成コストは数十 ns・アロケーション最小に収まる。
+Frame recording captures a single pc via `runtime.Callers(2, pc[:1])`. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost down to tens of nanoseconds with minimal allocation.
 
-### 4.2 ビルダーメソッド
+### 4.2 Builder methods
 
-すべてレシーバのシャローコピーを返す。**フレームは再記録しない**(記録は New/Wrap の責務)。attrs の追加は「コピーして append」で行い、元スライスとの共有を避ける(`append(slices.Clip(e.attrs), ...)` 相当)。
+All return a shallow copy of the receiver. **None re-record a frame** (recording is New/Wrap's job). Appending to attrs is done as "copy then append", avoiding sharing with the original slice (equivalent to `append(slices.Clip(e.attrs), ...)`).
 
 ```go
-// WithCode はコードを差し替えたコピーを返す。
+// WithCode returns a copy with the code replaced.
 func (e *Error) WithCode(c Code) *Error
 
-// WithPublic は外部公開メッセージを設定したコピーを返す。
+// WithPublic returns a copy with the public message set.
 func (e *Error) WithPublic(msg string) *Error
 
-// With は slog.Attr を追加したコピーを返す。
-// 例: e.With(slog.String("user_id", id), slog.Int("attempt", n))
+// With returns a copy with the given slog.Attr values appended.
+// Example: e.With(slog.String("user_id", id), slog.Int("attempt", n))
 func (e *Error) With(attrs ...slog.Attr) *Error
 ```
 
-全ビルダーメソッドと後述のアクセサは **nil レシーバ安全**(nil なら nil / ゼロ値を返す)。`Wrap` が nil を返しうるため、チェーン呼び出しを panic させないための規定。
+Every builder method and every accessor below is **nil-receiver safe** (returns nil / a zero value when called on nil). This is specified because `Wrap` can return nil, and chained calls must not panic as a result.
 
-### 4.3 error インターフェースと Unwrap
+### 4.3 The error interface and Unwrap
 
 ```go
-// Error は "msg: cause" を返す。cause == nil なら msg のみ。
-// msg が空で cause がある場合は cause.Error() のみ(コロンを残さない)。
+// Error returns "msg: cause", or just msg if cause == nil.
+// If msg is empty and cause is set, returns cause.Error() alone (no stray colon).
 func (e *Error) Error() string
 
-func (e *Error) Unwrap() error // cause を返す
+func (e *Error) Unwrap() error // returns cause
 ```
 
-`Is` / `As` は独自実装しない。標準の `errors.Is/As` が `Unwrap` を辿ることで機能する。コードによる比較は `CodeOf` で明示的に行う設計とし、「`errors.Is(err, errtrail.NotFound)` 的な暗黙マッチ」は提供しない(挙動が推測しづらいため)。
+`Is` / `As` are not implemented separately. The standard `errors.Is/As` work by walking `Unwrap`. Code comparison is done explicitly via `CodeOf` — this library deliberately does not provide implicit matching like `errors.Is(err, errtrail.NotFound)`, since that behavior would be hard to predict.
 
 ---
 
-## 5. 検査 API(inspect.go)
+## 5. Inspection API (inspect.go)
 
 ```go
-// CodeOf は err のチェーンを外側から辿り、最初に見つかった
-// code != OK の *Error の Code を返す。
-// err == nil なら OK、*Error が見つからない(または全部 code 未設定)なら Unknown。
-// 探索は Unwrap() error と Unwrap() []error(errors.Join)の両方を深さ優先で辿る。
+// CodeOf walks err's chain from the outside in and returns the Code of the
+// first *Error whose code != OK.
+// Returns OK if err is nil, and Unknown if no *Error is found (or every
+// *Error in the chain has an unset code).
+// The walk follows both Unwrap() error and Unwrap() []error (errors.Join)
+// depth-first.
 func CodeOf(err error) Code
 
-// PublicMessage はチェーンを外側から辿り、最初に見つかった非空の public を返す。
-// 見つからなければ http.StatusText(CodeOf(err).HTTPStatus()) を返す
-// (例: NotFound → "Not Found")。内部メッセージには決してフォールバックしない。
+// PublicMessage walks the chain from the outside in and returns the first
+// non-empty public message found. Falls back to
+// http.StatusText(CodeOf(err).HTTPStatus()) if none is set
+// (e.g. NotFound -> "Not Found"). Never falls back to an internal message.
 func PublicMessage(err error) string
 
-// Trace はチェーン内の全 *Error のフレームを外側(最後にラップした場所)から
-// 内側(発生源)の順で返す。*Error が無ければ nil。
+// Trace returns the frames of every *Error in the chain, ordered from the
+// outermost (where it was last wrapped) to the innermost (where it
+// originated). Returns nil if no *Error is found.
 func Trace(err error) []Frame
 
-// Attrs はチェーン内の全 *Error の attrs を外側から内側の順で連結して返す。
-// キーの重複除去はしない(slog 側の挙動に委ねる)。
+// Attrs concatenates the attrs of every *Error in the chain, from outermost
+// to innermost. Duplicate keys are not deduplicated (left to slog's own
+// behavior).
 func Attrs(err error) []slog.Attr
 ```
 
@@ -229,44 +241,45 @@ func Attrs(err error) []slog.Attr
 
 ```go
 type Frame struct {
-    Function string // 完全修飾関数名 例: "example.com/app/repo.(*UserRepo).Get"
-    File     string // フルパス
+    Function string // Fully qualified function name, e.g. "example.com/app/repo.(*UserRepo).Get"
+    File     string // Full path.
     Line     int
-    Msg      string // そのフレームを記録した *Error の内部 msg
+    Msg      string // The internal msg of the *Error that recorded this frame.
 }
 
-// String は "Function (File:Line): Msg" を返す。Msg が空なら ": Msg" を省略。
+// String returns "Function (File:Line): Msg", omitting ": Msg" when Msg is empty.
 func (f Frame) String() string
 ```
 
-### 5.2 チェーン探索の共通実装
+### 5.2 Shared chain-walking implementation
 
-`CodeOf` / `PublicMessage` / `Trace` / `Attrs` は同じ walk 関数を共有する:
+`CodeOf` / `PublicMessage` / `Trace` / `Attrs` all share the same walk function:
 
 ```go
-// walk は err から深さ優先(自分 → Unwrap の順、Join は先頭ブランチ優先)で
-// *Error を訪問する。fn が false を返したら打ち切り。
+// walk visits *Error values in err's chain depth-first (itself, then
+// Unwrap; a Join visits its first branch first). Stops as soon as fn
+// returns false.
 func walk(err error, fn func(*Error) bool)
 ```
 
-- `errors.Join` / `Unwrap() []error` 実装に遭遇したら各要素を順に再帰する。
-- 循環対策は不要(標準 errors パッケージ同様、循環チェーンは作った側の責任とする)。ただし再帰深度は Go のスタックに任せる。
+- Whenever an `errors.Join` / `Unwrap() []error` implementation is encountered, each element is recursed into in order.
+- No cycle protection is needed (as with the standard errors package, a cyclic chain is the constructor's responsibility to avoid). Recursion depth is left to Go's own stack.
 
 ---
 
-## 6. fmt.Formatter(format.go)
+## 6. fmt.Formatter (format.go)
 
 ```go
 func (e *Error) Format(s fmt.State, verb rune)
 ```
 
-| verb | 出力 |
+| verb | output |
 |---|---|
-| `%s`, `%v` | `e.Error()` と同一 |
+| `%s`, `%v` | same as `e.Error()` |
 | `%q` | `strconv.Quote(e.Error())` |
-| `%+v` | 下記の複数行形式 |
+| `%+v` | the multi-line form below |
 
-`%+v` の出力形式(正確にこの通りに実装する):
+`%+v` output format (implement it exactly as shown):
 
 ```
 get profile: query user: sql: no rows in result set
@@ -278,34 +291,34 @@ get profile: query user: sql: no rows in result set
     example.com/app/repo.(*UserRepo).Get (/src/app/repo/user.go:42): query user
 ```
 
-- 1 行目: `e.Error()`(チェーン全体の連結メッセージ)
-- `code:` 行: `CodeOf(e).String()`
-- `public:` 行: 明示設定された public があるときのみ出力(フォールバック値は出さない)
-- `attrs:` 行: `Attrs(e)` が空なら行ごと省略。`key=value` を半角スペース区切り
-- `trace:` 以下: `Trace(e)` の各 Frame を `Frame.String()` で 1 行ずつ。空なら `trace:` ごと省略
-- インデントは半角スペース 2 個、trace の要素は 4 個
+- Line 1: `e.Error()` (the concatenated message across the whole chain)
+- `code:` line: `CodeOf(e).String()`
+- `public:` line: printed only when a public message was explicitly set (never a fallback value)
+- `attrs:` line: omitted entirely if `Attrs(e)` is empty; `key=value` pairs separated by a single space
+- `trace:` and below: one line per Frame in `Trace(e)`, via `Frame.String()`; the whole `trace:` section is omitted if empty
+- Indentation is 2 spaces; trace entries are indented 4 spaces
 
 ---
 
-## 7. slog 連携(slog.go)
+## 7. slog integration (slog.go)
 
 ```go
-// LogValue は slog.LogValuer の実装。グループ値を返す。
+// LogValue implements slog.LogValuer. Returns a group value.
 func (e *Error) LogValue() slog.Value
 ```
 
-返すグループの内容:
+Contents of the returned group:
 
-| key | 型 | 値 |
+| key | type | value |
 |---|---|---|
 | `msg` | string | `e.Error()` |
 | `code` | string | `CodeOf(e).String()` |
-| `trace` | []string | `Trace(e)` の各要素の `Frame.String()` |
-| (attrs) | — | `Attrs(e)` をグループ直下に展開 |
+| `trace` | []string | `Frame.String()` for each element of `Trace(e)` |
+| (attrs) | — | `Attrs(e)`, spread directly into the group |
 
-`public` はログには含めない(ログは内部向けであり、public はレスポンス生成専用)。
+`public` is never included in logs (logs are for internal use; public is exclusively for response generation).
 
-使用例:
+Usage example:
 
 ```go
 slog.Error("request failed", slog.Any("error", err))
@@ -313,46 +326,48 @@ slog.Error("request failed", slog.Any("error", err))
 //        "trace":["...(user.go:88): get profile","..."],"user_id":42}}
 ```
 
-注意: `slog.Any("error", err)` の err が `*Error` 以外(素の error)の場合は slog 標準の挙動になる。ドキュメントで「`errtrail.Wrap` してから渡す」ことを推奨として書く。
+Note: if the err passed to `slog.Any("error", err)` is not a `*Error` (a plain error instead), slog's standard behavior applies. The docs recommend wrapping with `errtrail.Wrap` before passing an error to a logger.
 
 ---
 
-## 8. problem パッケージ(RFC 9457)
+## 8. The problem package (RFC 9457)
 
-`github.com/repenguin22/errtrail/problem`。依存は `encoding/json`, `net/http`, コアの `errtrail` のみ。
+`github.com/repenguin22/errtrail/problem`. Depends only on `encoding/json`, `net/http`, and the core `errtrail` package.
 
 ```go
-// Problem は RFC 9457 の Problem Details オブジェクト。
-// Code は拡張メンバー(RFC 9457 §3.2)で、errtrail の Code 名を機械可読に伝える。
+// Problem is an RFC 9457 Problem Details object.
+// Code is an extension member (RFC 9457 §3.2) conveying errtrail's Code
+// name in machine-readable form.
 type Problem struct {
-    Type   string `json:"type,omitempty"`   // 省略時は "about:blank" 扱い(RFC 準拠)
+    Type   string `json:"type,omitempty"`   // Omitted means "about:blank", per RFC.
     Title  string `json:"title"`
     Status int    `json:"status"`
     Detail string `json:"detail,omitempty"`
     Code   string `json:"code"`
 }
 
-// From は err から Problem を組み立てる。
+// From builds a Problem from err.
 //   Status = errtrail.CodeOf(err).HTTPStatus()
 //   Title  = http.StatusText(Status)
-//   Detail = errtrail.PublicMessage(err) — ただし Title と同一値なら空にする(冗長回避)
+//   Detail = errtrail.PublicMessage(err) — empty if it equals Title (avoids redundancy)
 //   Code   = errtrail.CodeOf(err).String()
-//   Type   = TypeURL が非 nil なら TypeURL(CodeOf(err))、nil なら空
-// 内部メッセージ・attrs・trace は決して含めない。
+//   Type   = TypeURL(CodeOf(err)) if TypeURL is set, otherwise empty
+// Never includes the internal message, attrs, or trace.
 func From(err error) Problem
 
-// TypeURL は Code から type URI を導出するオプショナルなフック。
-// パッケージ変数。設定する場合はサーバ起動前に行うこと(並行書き込み不可)。
+// TypeURL is an optional hook that derives a type URI from a Code.
+// A package variable. If you set it, do so before the server starts
+// (concurrent writes are not supported).
 var TypeURL func(errtrail.Code) string
 
-// Write は From(err) を application/problem+json で w に書き込む。
-//   - Content-Type: application/problem+json ヘッダを設定
-//   - WriteHeader(p.Status)
-//   - json.Encode 失敗時は握りつぶさず error で返す
+// Write writes From(err) to w as application/problem+json.
+//   - Sets the Content-Type: application/problem+json header
+//   - Calls WriteHeader(p.Status)
+//   - Returns any json.Encode failure as an error rather than swallowing it
 func Write(w http.ResponseWriter, err error) error
 ```
 
-使用例:
+Usage example:
 
 ```go
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -368,23 +383,23 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## 9. grpcerr パッケージ(別モジュール)
+## 9. The grpcerr package (separate module)
 
-`github.com/repenguin22/errtrail/grpcerr`。独自 go.mod を持ち、`google.golang.org/grpc` に依存する。コアの `errtrail` には replace なしで依存できるよう、コアを先にタグ付けしてから grpcerr をタグ付けする運用(`grpcerr/vX.Y.Z` 形式のタグ)。
+`github.com/repenguin22/errtrail/grpcerr`. Has its own go.mod and depends on `google.golang.org/grpc`. To let it depend on the core `errtrail` without a replace directive, the operating convention is: tag the core first, then tag grpcerr (using `grpcerr/vX.Y.Z`-style tags).
 
 ```go
-// ToStatus は err を *status.Status に変換する。
+// ToStatus converts err to a *status.Status.
 //   code    = codes.Code(errtrail.CodeOf(err).GRPCCode())
 //   message = errtrail.PublicMessage(err)
-// err == nil のときは status.New(codes.OK, "")。
+// Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 
-// ToError は ToStatus(err).Err() を返す。gRPC ハンドラの return 用。
-// err == nil なら nil。
+// ToError returns ToStatus(err).Err(), for returning directly from a gRPC handler.
+// Returns nil when err is nil.
 func ToError(err error) error
 ```
 
-使用例:
+Usage example:
 
 ```go
 func (s *server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
@@ -397,43 +412,43 @@ func (s *server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User,
 }
 ```
 
-インターセプタは v1 では提供しない(各サービスのロギング方針と密結合になるため)。
+No interceptor is provided in v1 (it would end up tightly coupled to each service's own logging policy).
 
 ---
 
-## 10. エッジケース仕様(まとめ)
+## 10. Edge case specification (summary)
 
-| ケース | 挙動 |
+| Case | Behavior |
 |---|---|
-| `Wrap(nil, ...)` / `Wrapf(nil, ...)` | `nil` を返す |
-| nil レシーバへのメソッド呼び出し | `With*` は nil を返す。`Error()` は `"<nil>"`。`Unwrap`/`LogValue` 等はゼロ値 |
+| `Wrap(nil, ...)` / `Wrapf(nil, ...)` | returns `nil` |
+| Calling a method on a nil receiver | `With*` returns nil. `Error()` returns `"<nil>"`. `Unwrap`/`LogValue`/etc. return their zero values |
 | `CodeOf(nil)` | `OK` |
-| `CodeOf(fmt.Errorf("x"))`(*Error なし) | `Unknown` |
-| `Wrap` だけでコード未設定のチェーン | 内側の `*Error` のコードに委譲。どこにもなければ `Unknown` |
-| `PublicMessage` で public 未設定 | `http.StatusText(HTTPStatus)` にフォールバック。内部 msg は使わない |
-| `errors.Join(a, b)` の両方が `*Error` | 深さ優先で先勝ち(`CodeOf`/`PublicMessage` は最初の 1 件、`Trace`/`Attrs` は全件収集) |
-| カスタムコード未登録のまま使用 | `String()` は `"CODE(n)"`、HTTP 500、gRPC UNKNOWN(2) |
-| `Register(c < 100, ...)` / 重複登録 | panic |
-| `New(OK, ...)` | 禁止しない(vet 不能)が、doc で非推奨と明記。`CodeOf` は code==OK の Error をスキップするため実質 Unknown 扱いになる |
+| `CodeOf(fmt.Errorf("x"))` (no `*Error` present) | `Unknown` |
+| A chain built entirely with `Wrap` and no code set anywhere | Delegates to the innermost `*Error`'s code; `Unknown` if none has one |
+| `PublicMessage` when public is unset | Falls back to `http.StatusText(HTTPStatus)`. Never falls back to the internal msg |
+| `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
+| Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
+| `Register(c < 100, ...)` / duplicate registration | panics |
+| `New(OK, ...)` | Not forbidden (can't be caught by vet), but documented as discouraged. Since `CodeOf` skips an Error whose code == OK, it effectively resolves to Unknown |
 
 ---
 
-## 11. テスト計画
+## 11. Test plan
 
-- **code_test.go**: 全 17 組み込みコードのマッピング(HTTP/gRPC/String)をテーブルテスト。Register の正常系・panic 系。
-- **error_test.go**: New/Wrap/ビルダーのイミュータブル性(元の Error が変化しないこと、attrs スライスの共有がないこと)。nil 安全性の全パターン。`errors.Is/As/Unwrap` 互換(標準 `%w` チェーンとの混在含む)。
-- **inspect_test.go**: 上記エッジケース表を網羅。`errors.Join` を含む探索順。
-- **format_test.go**: `%s` / `%v` / `%q` / `%+v` の出力をゴールデン文字列で比較(file/line は正規表現でマッチ)。
-- **slog_test.go**: `slog.NewJSONHandler` + バッファで実際の JSON 出力を検証。
-- **problem_test.go**: `httptest.ResponseRecorder` で Content-Type / status / body を検証。Detail==Title のときの省略。
-- **grpcerr/grpcerr_test.go**: status 変換。カスタムコードの gRPC マッピング。
-- **ベンチマーク**(bench_test.go): `New`, `Wrap`, `Wrap x3 のチェーン生成`, `%+v` フォーマット。`New` は 1 alloc 程度を目標とし、リグレッション検知のため `-benchmem` の結果を README に記録。
+- **code_test.go**: table test covering all 17 built-in codes' mapping (HTTP/gRPC/String). Register's success and panic paths.
+- **error_test.go**: immutability of New/Wrap/builders (the original Error is never mutated, attrs slices are never shared). Every nil-safety case. `errors.Is/As/Unwrap` compatibility (including mixed chains with the standard `%w`).
+- **inspect_test.go**: covers every row of the edge-case table above. Walk order including `errors.Join`.
+- **format_test.go**: compares `%s` / `%v` / `%q` / `%+v` output against golden strings (file/line matched via regex).
+- **slog_test.go**: verifies actual JSON output via `slog.NewJSONHandler` plus a buffer.
+- **problem_test.go**: verifies Content-Type / status / body via `httptest.ResponseRecorder`. Omission when Detail==Title.
+- **grpcerr/grpcerr_test.go**: status conversion. gRPC mapping for a custom code.
+- **Benchmarks** (bench_test.go): `New`, `Wrap`, building a 3-deep `Wrap` chain, `%+v` formatting. `New` targets roughly 1 alloc; `-benchmem` results are recorded in the README for regression detection.
 
-## 12. 実装順序
+## 12. Implementation order
 
-1. `code.go`(+ テスト)— 依存なしで独立
-2. `frame.go` → `error.go`(+ テスト)
-3. `inspect.go`(walk 実装)(+ テスト)
-4. `format.go`, `slog.go`(+ テスト)
-5. `problem/`(+ テスト)
-6. コアを v0.1.0 タグ → `grpcerr/`(+ テスト)→ `grpcerr/v0.1.0` タグ
+1. `code.go` (+ tests) — standalone, no dependencies
+2. `frame.go` → `error.go` (+ tests)
+3. `inspect.go` (the walk implementation) (+ tests)
+4. `format.go`, `slog.go` (+ tests)
+5. `problem/` (+ tests)
+6. Tag the core v0.1.0 → `grpcerr/` (+ tests) → tag `grpcerr/v0.1.0`

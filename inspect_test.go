@@ -20,7 +20,7 @@ func TestCodeOfPlainError(t *testing.T) {
 
 func TestCodeOfWrapDelegatesInner(t *testing.T) {
 	inner := New(NotFound, "not found")
-	outer := Wrap(inner, "outer") // outer は code 未設定
+	outer := Wrap(inner, "outer") // outer has no code set
 	if got := CodeOf(outer); got != NotFound {
 		t.Errorf("CodeOf = %v, want NotFound", got)
 	}
@@ -36,7 +36,7 @@ func TestCodeOfOuterWins(t *testing.T) {
 
 func TestCodeOfAllUnset(t *testing.T) {
 	base := errors.New("x")
-	e := Wrap(base, "a") // code 未設定、内側は素の error
+	e := Wrap(base, "a") // no code set, and the inner error is a plain error
 	if got := CodeOf(e); got != Unknown {
 		t.Errorf("CodeOf = %v, want Unknown", got)
 	}
@@ -51,7 +51,7 @@ func TestPublicMessageFound(t *testing.T) {
 }
 
 func TestPublicMessageFallback(t *testing.T) {
-	e := New(NotFound, "internal detail") // public 未設定
+	e := New(NotFound, "internal detail") // public not set
 	if got := PublicMessage(e); got != "Not Found" {
 		t.Errorf("PublicMessage = %q, want %q (http.StatusText)", got, "Not Found")
 	}
@@ -75,13 +75,13 @@ func TestPublicMessageNil(t *testing.T) {
 }
 
 func TestTraceOrder(t *testing.T) {
-	inner := New(NotFound, "get")   // 発生源
-	outer := Wrap(inner, "service") // 外側
+	inner := New(NotFound, "get")   // where it originated
+	outer := Wrap(inner, "service") // outermost wrap
 	frames := Trace(outer)
 	if len(frames) != 2 {
 		t.Fatalf("len(frames) = %d, want 2", len(frames))
 	}
-	// 外側 → 内側の順。
+	// Ordered outermost to innermost.
 	if frames[0].Msg != "service" {
 		t.Errorf("frames[0].Msg = %q, want service", frames[0].Msg)
 	}
@@ -101,21 +101,21 @@ func TestJoinDepthFirst(t *testing.T) {
 	b := New(Internal, "b")
 	joined := errors.Join(a, b)
 
-	// CodeOf は先頭ブランチ優先で最初の non-OK。
+	// CodeOf visits the first branch first, picking the first non-OK code.
 	if got := CodeOf(joined); got != NotFound {
 		t.Errorf("CodeOf(join) = %v, want NotFound", got)
 	}
-	// Trace は全件収集。
+	// Trace collects every branch.
 	if got := len(Trace(joined)); got != 2 {
 		t.Errorf("len(Trace(join)) = %d, want 2", got)
 	}
 }
 
 func TestJoinPublicFirstBranch(t *testing.T) {
-	a := New(NotFound, "a") // public 未設定
+	a := New(NotFound, "a") // public not set
 	b := New(Internal, "b").WithPublic("boom")
 	joined := errors.Join(a, b)
-	// a に public が無いので探索は b へ進み "boom" を拾う。
+	// a has no public message, so the walk moves on to b and finds "boom".
 	if got := PublicMessage(joined); got != "boom" {
 		t.Errorf("PublicMessage(join) = %q, want boom", got)
 	}

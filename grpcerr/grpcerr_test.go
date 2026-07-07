@@ -25,7 +25,7 @@ func TestToStatusCode(t *testing.T) {
 }
 
 func TestToStatusFallbackMessage(t *testing.T) {
-	// public 未設定 → PublicMessage は http.StatusText。
+	// public not set -> PublicMessage falls back to http.StatusText.
 	err := errtrail.New(errtrail.Internal, "secret")
 	st := ToStatus(err)
 	if st.Code() != codes.Internal {
@@ -65,7 +65,7 @@ func TestToErrorRoundTrip(t *testing.T) {
 }
 
 func TestCustomCodeMapping(t *testing.T) {
-	// 一度だけ登録する(-count=2 でも二重登録 panic を避ける)。
+	// Register only once, so -count=2 doesn't panic on a duplicate registration.
 	registerOnce.Do(func() {
 		errtrail.Register(rateLimited, "RATE_LIMITED", 429, uint32(codes.ResourceExhausted))
 	})
