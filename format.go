@@ -30,25 +30,29 @@ func (e *Error) Format(s fmt.State, verb rune) {
 	}
 }
 
-// detailed builds the multi-line %+v output.
+// detailed builds the multi-line %+v output. It gathers code, public, attrs,
+// and trace in a single pass (collect) rather than walking the chain once per
+// section. The public line is printed only when a public message was
+// explicitly set — collect never yields a fallback value here.
 func (e *Error) detailed() string {
 	if e == nil {
 		return "<nil>"
 	}
+	c := collect(e)
 	var b strings.Builder
 
 	b.WriteString(e.Error())
 	b.WriteString("\n  code: ")
-	b.WriteString(CodeOf(e).String())
+	b.WriteString(c.code.String())
 
-	if pub := firstPublic(e); pub != "" {
+	if c.public != "" {
 		b.WriteString("\n  public: ")
-		b.WriteString(pub)
+		b.WriteString(c.public)
 	}
 
-	if attrs := Attrs(e); len(attrs) > 0 {
+	if len(c.attrs) > 0 {
 		b.WriteString("\n  attrs:")
-		for _, a := range attrs {
+		for _, a := range c.attrs {
 			b.WriteByte(' ')
 			b.WriteString(a.Key)
 			b.WriteByte('=')
@@ -56,28 +60,13 @@ func (e *Error) detailed() string {
 		}
 	}
 
-	if trace := Trace(e); len(trace) > 0 {
+	if len(c.trace) > 0 {
 		b.WriteString("\n  trace:")
-		for _, f := range trace {
+		for _, f := range c.trace {
 			b.WriteString("\n    ")
 			b.WriteString(f.String())
 		}
 	}
 
 	return b.String()
-}
-
-// firstPublic looks for an explicitly-set public message, outermost first.
-// It never returns a fallback value — %+v only prints the public line when
-// one was explicitly set.
-func firstPublic(err error) string {
-	msg := ""
-	walk(err, func(e *Error) bool {
-		if e.public != "" {
-			msg = e.public
-			return false
-		}
-		return true
-	})
-	return msg
 }

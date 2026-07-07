@@ -108,3 +108,35 @@ func Attrs(err error) []slog.Attr {
 	})
 	return attrs
 }
+
+// collected holds everything the %+v formatter and the slog LogValuer need,
+// gathered in a single pass instead of one walk per field.
+type collected struct {
+	code   Code        // resolved code, or Unknown if none is set
+	public string      // first explicitly-set public message, "" if none
+	trace  []Frame     // every frame, outermost to innermost
+	attrs  []slog.Attr // every attr, outermost to innermost
+}
+
+// collect walks err's chain once, gathering the resolved code, the first
+// public message, the full trace, and all attrs. The code and public results
+// match CodeOf and the "no fallback" public lookup; trace and attrs match
+// Trace and Attrs. It exists so the formatter and logger don't walk the chain
+// several times over.
+func collect(err error) collected {
+	c := collected{code: Unknown}
+	haveCode := false
+	walk(err, func(e *Error) bool {
+		if !haveCode && e.code != OK {
+			c.code = e.code
+			haveCode = true
+		}
+		if c.public == "" && e.public != "" {
+			c.public = e.public
+		}
+		c.trace = append(c.trace, resolveFrame(e.pc, e.msg))
+		c.attrs = append(c.attrs, e.attrs...)
+		return true
+	})
+	return c
+}

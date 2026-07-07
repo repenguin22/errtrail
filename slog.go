@@ -11,18 +11,19 @@ func (e *Error) LogValue() slog.Value {
 		return slog.Value{}
 	}
 
-	trace := Trace(e)
-	traceStrs := make([]string, len(trace))
-	for i, f := range trace {
+	// Gather code, trace, and attrs in one pass instead of three walks.
+	c := collect(e)
+	traceStrs := make([]string, len(c.trace))
+	for i, f := range c.trace {
 		traceStrs[i] = f.String()
 	}
 
 	group := []slog.Attr{
 		slog.String("msg", e.Error()),
-		slog.String("code", CodeOf(e).String()),
+		slog.String("code", c.code.String()),
 		slog.Any("trace", traceStrs),
 	}
-	group = append(group, Attrs(e)...)
+	group = append(group, c.attrs...)
 
 	return slog.GroupValue(group...)
 }
