@@ -121,11 +121,19 @@ func TestJoinPublicFirstBranch(t *testing.T) {
 	}
 }
 
+// typedNilError returns a non-nil error interface holding a nil *Error — the
+// classic Go footgun, as produced by a function declared to return error that
+// returns a nil concrete pointer. Going through a function boundary keeps the
+// concrete type out of the caller's flow analysis (so it models real code
+// rather than a comparison the compiler can fold away).
+func typedNilError() error {
+	var e *Error
+	return e
+}
+
 func TestInspectTypedNilError(t *testing.T) {
-	// A typed-nil *Error stored in a non-nil error interface (the classic Go
-	// footgun) must not panic any of the inspection functions.
-	var e *Error      // nil pointer
-	var err error = e // non-nil interface holding a nil *Error
+	// The inspection functions must not panic on a typed-nil *Error.
+	err := typedNilError()
 	if err == nil {
 		t.Fatal("interface should be non-nil")
 	}

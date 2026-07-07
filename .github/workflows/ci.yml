@@ -22,13 +22,6 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
-      - name: gofmt
-        if: matrix.go-version == 'stable'
-        run: |
-          out="$(gofmt -l .)"
-          if [ -n "$out" ]; then
-            echo "gofmt needed on:"; echo "$out"; exit 1
-          fi
       - name: vet
         run: go vet ./...
       - name: test
@@ -51,3 +44,27 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -race ./...
+
+  lint:
+    name: lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two separate go.mod modules, each linted from its own root. Both
+        # share the .golangci.yml at the repository root.
+        module: ['.', 'grpcerr']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: install golangci-lint
+        # Pinned to match the version used locally; bump deliberately.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: lint
+        working-directory: ${{ matrix.module }}
+        run: golangci-lint run --config "${{ github.workspace }}/.golangci.yml" ./...

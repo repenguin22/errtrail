@@ -21,13 +21,13 @@ type Error struct {
 
 // New creates a new error, recording one caller frame.
 func New(code Code, msg string) *Error {
-	return &Error{code: code, msg: msg, pc: caller(1)}
+	return &Error{code: code, msg: msg, pc: caller()}
 }
 
 // Newf is the fmt.Sprintf form of New. %w is not supported here (use Wrap to
 // wrap an error).
 func Newf(code Code, format string, args ...any) *Error {
-	return &Error{code: code, msg: fmt.Sprintf(format, args...), pc: caller(1)}
+	return &Error{code: code, msg: fmt.Sprintf(format, args...), pc: caller()}
 }
 
 // Wrap wraps err, recording one caller frame. The code is left unset (OK),
@@ -40,7 +40,7 @@ func Wrap(err error, msg string) *Error {
 	if err == nil {
 		return nil
 	}
-	return &Error{msg: msg, cause: err, pc: caller(1)}
+	return &Error{msg: msg, cause: err, pc: caller()}
 }
 
 // Wrapf is the fmt.Sprintf form of Wrap. Returns nil when err is nil.
@@ -48,7 +48,7 @@ func Wrapf(err error, format string, args ...any) *Error {
 	if err == nil {
 		return nil
 	}
-	return &Error{msg: fmt.Sprintf(format, args...), cause: err, pc: caller(1)}
+	return &Error{msg: fmt.Sprintf(format, args...), cause: err, pc: caller()}
 }
 
 // WithCode returns a copy with the code replaced. Does not record a new frame.

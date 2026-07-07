@@ -43,7 +43,7 @@ func TestFormatPlusV(t *testing.T) {
 	mustContain(t, out, "\n  trace:")
 
 	// Trace lines look like "Func (file:line): msg".
-	traceLine := regexp.MustCompile(`\n    \S+ \(.+:\d+\): get profile`)
+	traceLine := regexp.MustCompile(`\n {4}\S+ \(.+:\d+\): get profile`)
 	if !traceLine.MatchString(out) {
 		t.Errorf("trace line for outer not found:\n%s", out)
 	}

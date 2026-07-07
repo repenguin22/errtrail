@@ -4,9 +4,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/repenguin22/errtrail"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/repenguin22/errtrail"
 )
 
 const rateLimited errtrail.Code = 100

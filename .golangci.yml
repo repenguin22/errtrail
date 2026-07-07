@@ -1,0 +1,53 @@
+# golangci-lint configuration (v2 schema).
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - errorlint   # correct %w / errors.Is|As usage — key for an error library
+    - misspell
+    - revive      # exported-symbol doc checks, style
+    - unconvert
+    - unparam
+    - gocritic
+    - bodyclose
+    - predeclared
+  settings:
+    errcheck:
+      # Format writes to fmt.State (an io.Writer whose errors are, by the
+      # fmt.Formatter contract, unrecoverable and conventionally ignored).
+      exclude-functions:
+        - io.WriteString
+    errorlint:
+      # This library's own chain walking uses deliberate type assertions and
+      # switches on error values (walk) — exactly what the asserts check
+      # forbids. Keep the %w and == checks, which are what matter for callers.
+      errorf: true
+      asserts: false
+      comparison: true
+    revive:
+      rules:
+        - name: exported
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/repenguin22/errtrail
