@@ -55,6 +55,32 @@ load profile: query user: sql: no rows in result set
     example.com/app/repo.(*UserRepo).Get (/src/app/repo/user.go:42): query user
 ```
 
+## Structured logging
+
+`*Error` implements `slog.LogValuer`, so passing it to `slog.Any("error", err)` nests it as a structured group instead of a flat string — as long as `err` is a `*errtrail.Error` (wrap plain errors with `errtrail.Wrap` before logging them). `public` is deliberately left out; it's for response generation, not logs.
+
+```go
+slog.New(slog.NewJSONHandler(os.Stdout, nil)).
+    Error("request failed", slog.Any("error", err))
+```
+
+```json
+{
+  "time": "2026-07-07T23:25:18.408363+09:00",
+  "level": "ERROR",
+  "msg": "request failed",
+  "error": {
+    "msg": "load profile: query user: sql: no rows in result set",
+    "code": "NOT_FOUND",
+    "trace": [
+      "main.main (/app/main.go:17): load profile",
+      "main.main (/app/main.go:13): query user"
+    ],
+    "user_id": "42"
+  }
+}
+```
+
 ## Packages
 
 | Package | Dependencies | Role |
