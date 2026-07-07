@@ -1,0 +1,5 @@
+*.test
+cover.out
+.DS_Store
+go.work
+go.work.sum
