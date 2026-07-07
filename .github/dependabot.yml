@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # Core module (stdlib-only today, but keep it declared for the future).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # grpcerr module — where the real third-party surface lives (grpc, x/net, …).
+  - package-ecosystem: gomod
+    directory: /grpcerr
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Keep the GitHub Actions used in CI up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

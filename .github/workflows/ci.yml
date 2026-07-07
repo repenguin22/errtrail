@@ -68,3 +68,25 @@ jobs:
       - name: lint
         working-directory: ${{ matrix.module }}
         run: golangci-lint run --config "${{ github.workspace }}/.golangci.yml" ./...
+
+  vuln:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ['.', 'grpcerr']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: install govulncheck
+        # The vulnerability database is fetched at run time, so @latest is fine
+        # (and desirable) here — no version pin needed.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: govulncheck ./...
