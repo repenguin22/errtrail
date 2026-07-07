@@ -122,3 +122,7 @@ git tag grpcerr/v0.1.0    # grpcerr submodule
 ```
 
 `grpcerr`'s `require` points at a tagged core version (no replace). When developing both modules together, put a `go.work` outside the repo that uses both modules to get local references.
+
+## License
+
+[MIT](LICENSE)
