@@ -18,6 +18,8 @@ go get github.com/repenguin22/errtrail
 go get github.com/repenguin22/errtrail/grpcerr   # only if you use gRPC
 ```
 
+The core module supports **Go 1.22+**. The `grpcerr` module requires **Go 1.25+**, following the minimum of `google.golang.org/grpc`.
+
 ## Usage
 
 ```go
