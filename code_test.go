@@ -7,28 +7,29 @@ import (
 
 func TestBuiltinCodeMapping(t *testing.T) {
 	cases := []struct {
-		code Code
-		name string
-		http int
-		grpc uint32
+		code  Code
+		name  string
+		http  int
+		grpc  uint32
+		retry bool
 	}{
-		{OK, "OK", 200, 0},
-		{Canceled, "CANCELED", 499, 1},
-		{Unknown, "UNKNOWN", 500, 2},
-		{InvalidArgument, "INVALID_ARGUMENT", 400, 3},
-		{DeadlineExceeded, "DEADLINE_EXCEEDED", 504, 4},
-		{NotFound, "NOT_FOUND", 404, 5},
-		{AlreadyExists, "ALREADY_EXISTS", 409, 6},
-		{PermissionDenied, "PERMISSION_DENIED", 403, 7},
-		{ResourceExhausted, "RESOURCE_EXHAUSTED", 429, 8},
-		{FailedPrecondition, "FAILED_PRECONDITION", 400, 9},
-		{Aborted, "ABORTED", 409, 10},
-		{OutOfRange, "OUT_OF_RANGE", 400, 11},
-		{Unimplemented, "UNIMPLEMENTED", 501, 12},
-		{Internal, "INTERNAL", 500, 13},
-		{Unavailable, "UNAVAILABLE", 503, 14},
-		{DataLoss, "DATA_LOSS", 500, 15},
-		{Unauthenticated, "UNAUTHENTICATED", 401, 16},
+		{OK, "OK", 200, 0, false},
+		{Canceled, "CANCELED", 499, 1, false},
+		{Unknown, "UNKNOWN", 500, 2, false},
+		{InvalidArgument, "INVALID_ARGUMENT", 400, 3, false},
+		{DeadlineExceeded, "DEADLINE_EXCEEDED", 504, 4, true},
+		{NotFound, "NOT_FOUND", 404, 5, false},
+		{AlreadyExists, "ALREADY_EXISTS", 409, 6, false},
+		{PermissionDenied, "PERMISSION_DENIED", 403, 7, false},
+		{ResourceExhausted, "RESOURCE_EXHAUSTED", 429, 8, true},
+		{FailedPrecondition, "FAILED_PRECONDITION", 400, 9, false},
+		{Aborted, "ABORTED", 409, 10, true},
+		{OutOfRange, "OUT_OF_RANGE", 400, 11, false},
+		{Unimplemented, "UNIMPLEMENTED", 501, 12, false},
+		{Internal, "INTERNAL", 500, 13, false},
+		{Unavailable, "UNAVAILABLE", 503, 14, true},
+		{DataLoss, "DATA_LOSS", 500, 15, false},
+		{Unauthenticated, "UNAUTHENTICATED", 401, 16, false},
 	}
 	for _, c := range cases {
 		if got := c.code.String(); got != c.name {
@@ -39,6 +40,9 @@ func TestBuiltinCodeMapping(t *testing.T) {
 		}
 		if got := c.code.GRPCCode(); got != c.grpc {
 			t.Errorf("Code(%d).GRPCCode() = %d, want %d", c.code, got, c.grpc)
+		}
+		if got := c.code.Retryable(); got != c.retry {
+			t.Errorf("Code(%d).Retryable() = %v, want %v", c.code, got, c.retry)
 		}
 	}
 }
@@ -53,6 +57,9 @@ func TestUnregisteredCode(t *testing.T) {
 	}
 	if got := c.GRPCCode(); got != 2 {
 		t.Errorf("GRPCCode() = %d, want 2 (UNKNOWN)", got)
+	}
+	if c.Retryable() {
+		t.Error("Retryable() = true, want false for unregistered code")
 	}
 }
 
@@ -69,6 +76,20 @@ func TestRegister(t *testing.T) {
 	}
 	if got := rateLimited.GRPCCode(); got != 8 {
 		t.Errorf("GRPCCode() = %d", got)
+	}
+	// Registered without the Retryable option — not retryable by default.
+	if rateLimited.Retryable() {
+		t.Error("Retryable() = true, want false without the option")
+	}
+}
+
+func TestRegisterRetryableOption(t *testing.T) {
+	const flaky Code = 103
+	Register(flaky, "FLAKY_UPSTREAM", http.StatusServiceUnavailable, 14, Retryable())
+	t.Cleanup(func() { delete(codes, flaky) })
+
+	if !flaky.Retryable() {
+		t.Error("Retryable() = false, want true when registered with Retryable()")
 	}
 }
 

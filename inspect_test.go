@@ -43,6 +43,37 @@ func TestCodeOfAllUnset(t *testing.T) {
 	}
 }
 
+func TestIsRetryable(t *testing.T) {
+	if IsRetryable(nil) {
+		t.Error("IsRetryable(nil) = true, want false")
+	}
+	if IsRetryable(errors.New("plain")) {
+		t.Error("IsRetryable(plain) = true, want false (Unknown)")
+	}
+	if !IsRetryable(New(Unavailable, "down")) {
+		t.Error("IsRetryable(Unavailable) = false, want true")
+	}
+	// The wrap chain inherits the inner code.
+	if !IsRetryable(Wrap(New(Unavailable, "down"), "calling backend")) {
+		t.Error("IsRetryable(wrapped Unavailable) = false, want true")
+	}
+	// An outer WithCode overrides, consistent with CodeOf.
+	overridden := Wrap(New(Unavailable, "down"), "gave up").WithCode(Internal)
+	if IsRetryable(overridden) {
+		t.Error("IsRetryable(overridden to Internal) = true, want false")
+	}
+}
+
+func TestIsRetryableCustomCode(t *testing.T) {
+	const transientDep Code = 104
+	Register(transientDep, "TRANSIENT_DEP", 503, 14, Retryable())
+	t.Cleanup(func() { delete(codes, transientDep) })
+
+	if !IsRetryable(New(transientDep, "dep flapped")) {
+		t.Error("IsRetryable(custom retryable) = false, want true")
+	}
+}
+
 func TestPublicMessageFound(t *testing.T) {
 	inner := New(NotFound, "internal detail").WithPublic("User not found")
 	outer := Wrap(inner, "svc")

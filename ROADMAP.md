@@ -6,16 +6,7 @@ change (its own branch / PR).
 
 ## P1 — features production users will ask for first
 
-### 1. Retryability helper
-
-`IsRetryable(err) bool` derived from Code — `Unavailable`,
-`DeadlineExceeded`, `ResourceExhausted`, `Aborted` return true. A few lines,
-constantly reinvented by callers.
-
-- Custom codes need a retryable flag on registration. `Register`'s signature
-  is not yet frozen (pre-v1), so either extend it or add a variadic option.
-
-### 2. Reverse conversion: grpcerr.FromStatus / FromError
+### 1. Reverse conversion: grpcerr.FromStatus / FromError
 
 Convert a received `*status.Status` (or an error returned by a gRPC call)
 back into an `*errtrail.Error`, so clients of other services share the same
@@ -28,14 +19,14 @@ Code taxonomy end to end. Map codes 0–16 one-to-one; anything else becomes
 
 ## P2 — hardening and ecosystem
 
-### 3. Thread-safe or frozen code registry
+### 2. Thread-safe or frozen code registry
 
 `Register` currently relies on a documented contract ("call before the server
 starts"). Enforce it instead: copy-on-write via `atomic.Pointer[map]`, or
 freeze the table on first read and panic on late registration. Removes a
 whole class of subtle production races.
 
-### 4. Revisit the PublicMessage fallback for gRPC messages
+### 3. Revisit the PublicMessage fallback for gRPC messages
 
 `grpcerr.ToStatus` inherits `PublicMessage`'s `http.StatusText` fallback, so
 gRPC clients see HTTP wording ("Internal Server Error") and an empty message
@@ -43,13 +34,13 @@ for `Canceled` / custom codes. Consider falling back to the code name on the
 gRPC path instead. Behavior change on the wire — needs a minor version bump
 and a changelog entry.
 
-### 5. CHANGELOG and a v1.0 plan
+### 4. CHANGELOG and a v1.0 plan
 
 Adopters need a signal that the API is stable. Add `CHANGELOG.md` (Keep a
 Changelog format), backfill v0.1.x, and state the v1.0 criteria in the
 README (essentially: P1 items above settled, no open API questions).
 
-### 6. Coverage reporting in CI
+### 5. Coverage reporting in CI
 
 Coverage is already high (core 96.7% / problem 89.5% / grpcerr 100%); make it
 visible. Upload `go test -coverprofile` results in CI and add a badge next to

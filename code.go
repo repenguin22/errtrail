@@ -40,6 +40,7 @@ type codeInfo struct {
 	name       string
 	httpStatus int
 	grpcCode   uint32
+	retryable  bool
 }
 
 // codes maps Code to codeInfo.
@@ -49,24 +50,38 @@ type codeInfo struct {
 // concurrent writes. Reads (String/HTTPStatus/GRPCCode) happen from many
 // goroutines after startup, which is safe as long as all writes finished
 // before that point.
+// Retryable built-ins: DeadlineExceeded (may succeed under a fresh
+// deadline), ResourceExhausted (after backoff), Aborted (transaction-style
+// retry), Unavailable (the canonical transient failure). Canceled is not —
+// the caller gave up deliberately — and Unknown is conservatively not.
 var codes = map[Code]codeInfo{
-	OK:                 {"OK", http.StatusOK, 0},
-	Canceled:           {"CANCELED", 499, 1},
-	Unknown:            {"UNKNOWN", http.StatusInternalServerError, 2},
-	InvalidArgument:    {"INVALID_ARGUMENT", http.StatusBadRequest, 3},
-	DeadlineExceeded:   {"DEADLINE_EXCEEDED", http.StatusGatewayTimeout, 4},
-	NotFound:           {"NOT_FOUND", http.StatusNotFound, 5},
-	AlreadyExists:      {"ALREADY_EXISTS", http.StatusConflict, 6},
-	PermissionDenied:   {"PERMISSION_DENIED", http.StatusForbidden, 7},
-	ResourceExhausted:  {"RESOURCE_EXHAUSTED", http.StatusTooManyRequests, 8},
-	FailedPrecondition: {"FAILED_PRECONDITION", http.StatusBadRequest, 9},
-	Aborted:            {"ABORTED", http.StatusConflict, 10},
-	OutOfRange:         {"OUT_OF_RANGE", http.StatusBadRequest, 11},
-	Unimplemented:      {"UNIMPLEMENTED", http.StatusNotImplemented, 12},
-	Internal:           {"INTERNAL", http.StatusInternalServerError, 13},
-	Unavailable:        {"UNAVAILABLE", http.StatusServiceUnavailable, 14},
-	DataLoss:           {"DATA_LOSS", http.StatusInternalServerError, 15},
-	Unauthenticated:    {"UNAUTHENTICATED", http.StatusUnauthorized, 16},
+	OK:                 {"OK", http.StatusOK, 0, false},
+	Canceled:           {"CANCELED", 499, 1, false},
+	Unknown:            {"UNKNOWN", http.StatusInternalServerError, 2, false},
+	InvalidArgument:    {"INVALID_ARGUMENT", http.StatusBadRequest, 3, false},
+	DeadlineExceeded:   {"DEADLINE_EXCEEDED", http.StatusGatewayTimeout, 4, true},
+	NotFound:           {"NOT_FOUND", http.StatusNotFound, 5, false},
+	AlreadyExists:      {"ALREADY_EXISTS", http.StatusConflict, 6, false},
+	PermissionDenied:   {"PERMISSION_DENIED", http.StatusForbidden, 7, false},
+	ResourceExhausted:  {"RESOURCE_EXHAUSTED", http.StatusTooManyRequests, 8, true},
+	FailedPrecondition: {"FAILED_PRECONDITION", http.StatusBadRequest, 9, false},
+	Aborted:            {"ABORTED", http.StatusConflict, 10, true},
+	OutOfRange:         {"OUT_OF_RANGE", http.StatusBadRequest, 11, false},
+	Unimplemented:      {"UNIMPLEMENTED", http.StatusNotImplemented, 12, false},
+	Internal:           {"INTERNAL", http.StatusInternalServerError, 13, false},
+	Unavailable:        {"UNAVAILABLE", http.StatusServiceUnavailable, 14, true},
+	DataLoss:           {"DATA_LOSS", http.StatusInternalServerError, 15, false},
+	Unauthenticated:    {"UNAUTHENTICATED", http.StatusUnauthorized, 16, false},
+}
+
+// RegisterOption customizes a code being registered.
+type RegisterOption func(*codeInfo)
+
+// Retryable returns a RegisterOption that marks the code being registered
+// as retryable, so IsRetryable and (Code).Retryable report true for it.
+// Codes are not retryable by default.
+func Retryable() RegisterOption {
+	return func(info *codeInfo) { info.retryable = true }
 }
 
 // Register adds a custom code. Call it from an init function, or otherwise
@@ -78,7 +93,7 @@ var codes = map[Code]codeInfo{
 // would otherwise panic inside http.ResponseWriter.WriteHeader at request
 // time, far from the cause), or if grpcCode is above 16 (gRPC defines codes
 // 0–16; anything else is not portable across clients).
-func Register(c Code, name string, httpStatus int, grpcCode uint32) {
+func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption) {
 	if c < customCodeMin {
 		panic("errtrail: custom code must be >= 100, got " + strconv.FormatUint(uint64(c), 10))
 	}
@@ -94,7 +109,11 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32) {
 	if _, ok := codes[c]; ok {
 		panic("errtrail: code already registered: " + strconv.FormatUint(uint64(c), 10))
 	}
-	codes[c] = codeInfo{name: name, httpStatus: httpStatus, grpcCode: grpcCode}
+	info := codeInfo{name: name, httpStatus: httpStatus, grpcCode: grpcCode}
+	for _, o := range opts {
+		o(&info)
+	}
+	codes[c] = info
 }
 
 // String returns the code's name, e.g. "NOT_FOUND" for built-ins or
@@ -124,4 +143,15 @@ func (c Code) GRPCCode() uint32 {
 		return info.grpcCode
 	}
 	return 2 // UNKNOWN
+}
+
+// Retryable reports whether the code classifies a failure worth retrying.
+// Built-ins: DeadlineExceeded, ResourceExhausted, Aborted, and Unavailable
+// return true; everything else returns false. Custom codes return true only
+// if registered with the Retryable option. Unregistered codes return false.
+func (c Code) Retryable() bool {
+	if info, ok := codes[c]; ok {
+		return info.retryable
+	}
+	return false
 }

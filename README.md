@@ -73,6 +73,16 @@ _ = problem.Write(w, err, problem.Instance(r.URL.Path))
 //  "instance":"/users","status":400,"title":"Bad Request"}
 ```
 
+Retry decisions also derive from the code — `Unavailable`, `DeadlineExceeded`,
+`ResourceExhausted`, and `Aborted` are retryable; custom codes opt in with
+`errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`:
+
+```go
+if errtrail.IsRetryable(err) {
+    return retryWithBackoff(ctx, op)
+}
+```
+
 Inspect the propagation path with `%+v`:
 
 ```

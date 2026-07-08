@@ -22,7 +22,7 @@ A Go error library for web services (HTTP / gRPC).
 
 ### Non-goals (out of scope for v1)
 
-- Metadata such as a retryable flag or a log-level hint
+- Metadata such as a log-level hint — a retryable flag is supported as of v0.3.0 (`IsRetryable` / `Register`'s `Retryable` option, §3.3)
 - gRPC's rich `errdetails` beyond `ErrorInfo` (BadRequest, RetryInfo, etc.) — an opt-in `ErrorInfo` carrying the code name is supported via `grpcerr.Domain` (§9)
 - Reverse conversion from HTTP status back to `Code`
 - gRPC interceptors, HTTP middleware
@@ -97,46 +97,61 @@ func (c Code) HTTPStatus() int
 // unregistered codes return 2 (UNKNOWN). Returned as uint32 so this package
 // need not depend on the grpc package.
 func (c Code) GRPCCode() uint32
+
+// Retryable reports whether the code classifies a failure worth retrying.
+// Built-ins: DeadlineExceeded, ResourceExhausted, Aborted, and Unavailable
+// return true; everything else false. Custom codes return true only if
+// registered with the Retryable option; unregistered codes return false.
+func (c Code) Retryable() bool
 ```
 
 ### 3.2 HTTP mapping table (built-ins)
 
-Adopts gRPC's official HTTP mapping as-is (aligned with grpc-gateway).
+Adopts gRPC's official HTTP mapping as-is (aligned with grpc-gateway). The Retryable column reflects the built-in retryability set: DEADLINE_EXCEEDED (may succeed under a fresh deadline), RESOURCE_EXHAUSTED (after backoff), ABORTED (transaction-style retry), UNAVAILABLE (the canonical transient failure). CANCELED is not retryable — the caller gave up deliberately — and UNKNOWN is conservatively not.
 
-| Code | Name | HTTP |
-|---|---|---|
-| 0 | OK | 200 |
-| 1 | CANCELED | 499 |
-| 2 | UNKNOWN | 500 |
-| 3 | INVALID_ARGUMENT | 400 |
-| 4 | DEADLINE_EXCEEDED | 504 |
-| 5 | NOT_FOUND | 404 |
-| 6 | ALREADY_EXISTS | 409 |
-| 7 | PERMISSION_DENIED | 403 |
-| 8 | RESOURCE_EXHAUSTED | 429 |
-| 9 | FAILED_PRECONDITION | 400 |
-| 10 | ABORTED | 409 |
-| 11 | OUT_OF_RANGE | 400 |
-| 12 | UNIMPLEMENTED | 501 |
-| 13 | INTERNAL | 500 |
-| 14 | UNAVAILABLE | 503 |
-| 15 | DATA_LOSS | 500 |
-| 16 | UNAUTHENTICATED | 401 |
+| Code | Name | HTTP | Retryable |
+|---|---|---|---|
+| 0 | OK | 200 | |
+| 1 | CANCELED | 499 | |
+| 2 | UNKNOWN | 500 | |
+| 3 | INVALID_ARGUMENT | 400 | |
+| 4 | DEADLINE_EXCEEDED | 504 | ✔ |
+| 5 | NOT_FOUND | 404 | |
+| 6 | ALREADY_EXISTS | 409 | |
+| 7 | PERMISSION_DENIED | 403 | |
+| 8 | RESOURCE_EXHAUSTED | 429 | ✔ |
+| 9 | FAILED_PRECONDITION | 400 | |
+| 10 | ABORTED | 409 | ✔ |
+| 11 | OUT_OF_RANGE | 400 | |
+| 12 | UNIMPLEMENTED | 501 | |
+| 13 | INTERNAL | 500 | |
+| 14 | UNAVAILABLE | 503 | ✔ |
+| 15 | DATA_LOSS | 500 | |
+| 16 | UNAUTHENTICATED | 401 | |
 
 ### 3.3 Registering custom codes
 
 ```go
+// RegisterOption customizes a code being registered.
+type RegisterOption func(*codeInfo)
+
+// Retryable returns a RegisterOption marking the code as retryable
+// (IsRetryable / (Code).Retryable report true). Not retryable by default.
+func Retryable() RegisterOption
+
 // Register adds a custom code. Intended to be called at init time (before
 // the service starts); registration itself is not made concurrency-safe
 // (a plain write to an internal map — reads are specified to only happen
 // after startup).
-// Panics if c < 100, or if the code is already registered.
-func Register(c Code, name string, httpStatus int, grpcCode uint32)
+// Panics if c < 100, if the code is already registered, if name is empty,
+// if httpStatus is outside [100, 599], or if grpcCode is above 16.
+func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption)
 ```
 
 - 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
-- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32}`). The 17 built-ins are seeded into the same map at init, so lookups go through a single path.
+- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}`). The 17 built-ins are seeded into the same map at init, so lookups go through a single path.
 - The doc comment states explicitly: "call `Register` from `init` or before the server starts. Calling it afterward is a data race."
+- Options keep the signature open for future per-code metadata (e.g. a log-level hint) without another signature change.
 
 ---
 
@@ -229,6 +244,12 @@ func (e *Error) Unwrap() error // returns cause
 // The walk follows both Unwrap() error and Unwrap() []error (errors.Join)
 // depth-first.
 func CodeOf(err error) Code
+
+// IsRetryable reports whether err classifies a failure worth retrying,
+// derived purely from CodeOf(err) — see (Code).Retryable for the built-in
+// set. Returns false for nil and for non-errtrail errors (Unknown is
+// conservatively not retryable). No errors.Is inspection is performed.
+func IsRetryable(err error) bool
 
 // PublicMessage walks the chain from the outside in and returns the first
 // non-empty public message found. Falls back to
@@ -463,7 +484,7 @@ func ToStatus(err error) *status.Status
 func ToError(err error) error
 ```
 
-Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — RetryInfo needs retryability metadata, which doesn't exist yet; BadRequest can now be built on the core's public fields, `WithPublicField` / `PublicFields`).
+Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry; BadRequest can be built on the core's public fields, `WithPublicField` / `PublicFields`).
 
 Usage example:
 

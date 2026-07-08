@@ -58,6 +58,15 @@ func CodeOf(err error) Code {
 	return found
 }
 
+// IsRetryable reports whether err classifies a failure worth retrying,
+// derived purely from CodeOf(err) — see (Code).Retryable for the built-in
+// set. Returns false for nil and for non-errtrail errors (Unknown is
+// conservatively not retryable). No errors.Is inspection (e.g. of
+// context.Canceled) is performed.
+func IsRetryable(err error) bool {
+	return CodeOf(err).Retryable()
+}
+
 // PublicMessage walks err's chain from the outside in and returns the first
 // non-empty public message found. If none is set, it falls back to
 // http.StatusText(CodeOf(err).HTTPStatus()). It never falls back to an
