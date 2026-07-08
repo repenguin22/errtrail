@@ -103,6 +103,12 @@ func (c Code) GRPCCode() uint32
 // return true; everything else false. Custom codes return true only if
 // registered with the Retryable option; unregistered codes return false.
 func (c Code) Retryable() bool
+
+// CodeByName returns the Code registered under name — built-ins included,
+// e.g. "NOT_FOUND". Reports false for names it does not know. Useful for
+// parsing code names from configuration or a wire format (grpcerr's
+// ErrorInfo.Reason recovery).
+func CodeByName(name string) (Code, bool)
 ```
 
 ### 3.2 HTTP mapping table (built-ins)
@@ -143,13 +149,14 @@ func Retryable() RegisterOption
 // the service starts); registration itself is not made concurrency-safe
 // (a plain write to an internal map — reads are specified to only happen
 // after startup).
-// Panics if c < 100, if the code is already registered, if name is empty,
-// if httpStatus is outside [100, 599], or if grpcCode is above 16.
+// Panics if c < 100, if the code or the name is already registered (names
+// are the CodeByName reverse-lookup key, so they must be unique), if name
+// is empty, if httpStatus is outside [100, 599], or if grpcCode is above 16.
 func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption)
 ```
 
 - 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
-- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}`). The 17 built-ins are seeded into the same map at init, so lookups go through a single path.
+- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}`) plus a `map[string]Code` reverse index for CodeByName, seeded from the same table at init and kept in sync by Register. The 17 built-ins are seeded into the same maps, so lookups go through a single path.
 - The doc comment states explicitly: "call `Register` from `init` or before the server starts. Calling it afterward is a data race."
 - Options keep the signature open for future per-code metadata (e.g. a log-level hint) without another signature change.
 

@@ -35,6 +35,26 @@ const (
 // built-ins.
 const customCodeMin Code = 100
 
+// codeNames is the name -> Code reverse index, seeded from codes at init
+// and kept in sync by Register (which rejects duplicate names). Same
+// concurrency contract as codes: writes only before the server starts.
+var codeNames = map[string]Code{}
+
+func init() {
+	for c, info := range codes {
+		codeNames[info.name] = c
+	}
+}
+
+// CodeByName returns the Code registered under name — built-ins included,
+// e.g. "NOT_FOUND". Reports false for names it does not know. Useful for
+// parsing code names from configuration or from a wire format (see
+// grpcerr's ErrorInfo.Reason recovery).
+func CodeByName(name string) (Code, bool) {
+	c, ok := codeNames[name]
+	return c, ok
+}
+
 // codeInfo holds the metadata for a single Code.
 type codeInfo struct {
 	name       string
@@ -88,11 +108,13 @@ func Retryable() RegisterOption {
 // before the server starts — calling it afterward races with other
 // goroutines reading Code.
 //
-// Panics if c is below customCodeMin (100), if c is already registered, if
-// name is empty, if httpStatus is outside [100, 599] (an out-of-range status
-// would otherwise panic inside http.ResponseWriter.WriteHeader at request
-// time, far from the cause), or if grpcCode is above 16 (gRPC defines codes
-// 0–16; anything else is not portable across clients).
+// Panics if c is below customCodeMin (100), if c or name is already
+// registered (names are the reverse-lookup key for CodeByName, so they must
+// be unique), if name is empty, if httpStatus is outside [100, 599] (an
+// out-of-range status would otherwise panic inside
+// http.ResponseWriter.WriteHeader at request time, far from the cause), or
+// if grpcCode is above 16 (gRPC defines codes 0–16; anything else is not
+// portable across clients).
 func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption) {
 	if c < customCodeMin {
 		panic("errtrail: custom code must be >= 100, got " + strconv.FormatUint(uint64(c), 10))
@@ -109,11 +131,15 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 	if _, ok := codes[c]; ok {
 		panic("errtrail: code already registered: " + strconv.FormatUint(uint64(c), 10))
 	}
+	if _, ok := codeNames[name]; ok {
+		panic("errtrail: code name already registered: " + name)
+	}
 	info := codeInfo{name: name, httpStatus: httpStatus, grpcCode: grpcCode}
 	for _, o := range opts {
 		o(&info)
 	}
 	codes[c] = info
+	codeNames[name] = c
 }
 
 // String returns the code's name, e.g. "NOT_FOUND" for built-ins or

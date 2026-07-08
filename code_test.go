@@ -66,7 +66,7 @@ func TestUnregisteredCode(t *testing.T) {
 func TestRegister(t *testing.T) {
 	const rateLimited Code = 100
 	Register(rateLimited, "RATE_LIMITED", http.StatusTooManyRequests, 8)
-	t.Cleanup(func() { delete(codes, rateLimited) })
+	t.Cleanup(func() { unregister(rateLimited, "RATE_LIMITED") })
 
 	if got := rateLimited.String(); got != "RATE_LIMITED" {
 		t.Errorf("String() = %q", got)
@@ -86,10 +86,40 @@ func TestRegister(t *testing.T) {
 func TestRegisterRetryableOption(t *testing.T) {
 	const flaky Code = 103
 	Register(flaky, "FLAKY_UPSTREAM", http.StatusServiceUnavailable, 14, Retryable())
-	t.Cleanup(func() { delete(codes, flaky) })
+	t.Cleanup(func() { unregister(flaky, "FLAKY_UPSTREAM") })
 
 	if !flaky.Retryable() {
 		t.Error("Retryable() = false, want true when registered with Retryable()")
+	}
+}
+
+func TestRegisterPanicsOnDuplicateName(t *testing.T) {
+	const first Code = 105
+	Register(first, "DUP_NAME", 500, 2)
+	t.Cleanup(func() { unregister(first, "DUP_NAME") })
+
+	defer func() {
+		if recover() == nil {
+			t.Error("expected panic for duplicate name")
+		}
+	}()
+	Register(Code(106), "DUP_NAME", 503, 14) // different code, same name
+}
+
+func TestCodeByName(t *testing.T) {
+	if c, ok := CodeByName("NOT_FOUND"); !ok || c != NotFound {
+		t.Errorf("CodeByName(NOT_FOUND) = %v, %v", c, ok)
+	}
+
+	const named Code = 107
+	Register(named, "NAMED_CODE", 500, 2)
+	t.Cleanup(func() { unregister(named, "NAMED_CODE") })
+	if c, ok := CodeByName("NAMED_CODE"); !ok || c != named {
+		t.Errorf("CodeByName(NAMED_CODE) = %v, %v", c, ok)
+	}
+
+	if _, ok := CodeByName("NO_SUCH_NAME"); ok {
+		t.Error("CodeByName(NO_SUCH_NAME) should report false")
 	}
 }
 
@@ -102,10 +132,16 @@ func TestRegisterPanicsBelowMin(t *testing.T) {
 	Register(Code(50), "BAD", 500, 2)
 }
 
+// unregister removes a code from both registry maps — test cleanup only.
+func unregister(c Code, name string) {
+	delete(codes, c)
+	delete(codeNames, name)
+}
+
 func TestRegisterPanicsOnDuplicate(t *testing.T) {
 	const dup Code = 101
 	Register(dup, "DUP", 500, 2)
-	t.Cleanup(func() { delete(codes, dup) })
+	t.Cleanup(func() { unregister(dup, "DUP") })
 
 	defer func() {
 		if recover() == nil {

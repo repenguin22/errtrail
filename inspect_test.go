@@ -67,7 +67,7 @@ func TestIsRetryable(t *testing.T) {
 func TestIsRetryableCustomCode(t *testing.T) {
 	const transientDep Code = 104
 	Register(transientDep, "TRANSIENT_DEP", 503, 14, Retryable())
-	t.Cleanup(func() { delete(codes, transientDep) })
+	t.Cleanup(func() { unregister(transientDep, "TRANSIENT_DEP") })
 
 	if !IsRetryable(New(transientDep, "dep flapped")) {
 		t.Error("IsRetryable(custom retryable) = false, want true")
