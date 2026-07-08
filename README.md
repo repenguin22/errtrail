@@ -45,6 +45,15 @@ _ = problem.Write(w, err)                                        // only the pub
 return nil, grpcerr.ToError(err)
 ```
 
+To also carry the errtrail code name across the wire as a machine-readable
+[`errdetails.ErrorInfo`](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/errdetails#ErrorInfo)
+(useful for custom codes, whose names are otherwise lost), set the service
+domain once at startup:
+
+```go
+grpcerr.Domain = "myservice.example.com" // opt-in; empty (default) attaches nothing
+```
+
 Inspect the propagation path with `%+v`:
 
 ```

@@ -23,7 +23,7 @@ A Go error library for web services (HTTP / gRPC).
 ### Non-goals (out of scope for v1)
 
 - Metadata such as a retryable flag or a log-level hint
-- gRPC's `errdetails` (rich details like BadRequest, etc.)
+- gRPC's rich `errdetails` beyond `ErrorInfo` (BadRequest, RetryInfo, etc.) — an opt-in `ErrorInfo` carrying the code name is supported via `grpcerr.Domain` (§9)
 - Reverse conversion from HTTP status back to `Code`
 - gRPC interceptors, HTTP middleware
 - Internationalization (i18n)
@@ -398,9 +398,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
 `github.com/repenguin22/errtrail/grpcerr`. Has its own go.mod and depends on `google.golang.org/grpc`. To let it depend on the core `errtrail` without a replace directive, the operating convention is: tag the core first, then tag grpcerr (using `grpcerr/vX.Y.Z`-style tags).
 
 ```go
+// Domain opts in to attaching an errdetails.ErrorInfo to every non-OK
+// status produced by ToStatus / ToError. Set it to the service's domain
+// before the server starts (same race caveat as problem.TypeURL); empty
+// (the default) attaches nothing, keeping the wire format unchanged.
+var Domain string
+
 // ToStatus converts err to a *status.Status.
 //   code    = codes.Code(errtrail.CodeOf(err).GRPCCode())
 //   message = errtrail.PublicMessage(err)
+// When Domain is non-empty, attaches
+// errdetails.ErrorInfo{Reason: code.String(), Domain: Domain} so the
+// errtrail code name (e.g. a custom "RATE_LIMITED") survives the wire even
+// though the numeric gRPC code may be shared. If details cannot be attached
+// (WithDetails rejects OK statuses — a custom code may map to gRPC OK), the
+// plain status is returned instead; the status itself is never lost.
 // Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 
@@ -408,6 +420,8 @@ func ToStatus(err error) *status.Status
 // Returns nil when err is nil.
 func ToError(err error) error
 ```
+
+Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — RetryInfo needs retryability metadata, BadRequest needs public field data; neither exists yet).
 
 Usage example:
 
