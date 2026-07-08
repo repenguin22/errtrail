@@ -54,6 +54,21 @@ domain once at startup:
 grpcerr.Domain = "myservice.example.com" // opt-in; empty (default) attaches nothing
 ```
 
+On the client side of a gRPC call, convert back into the same taxonomy —
+custom codes are recovered from `ErrorInfo.Reason` when the calling service
+registered the same code:
+
+```go
+res, err := client.GetUser(ctx, req)
+if err != nil {
+    terr := grpcerr.FromError(err)     // wire code -> errtrail.Code; wraps err
+    if errtrail.IsRetryable(terr) {    // same taxonomy end to end
+        // back off and retry
+    }
+    return nil, errtrail.Wrap(terr, "call user service")
+}
+```
+
 Public extension fields (RFC 9457 §3.2) carry structured, client-safe details
 — e.g. field-level validation errors — without leaking internals. Unlike
 `With` attrs (internal, logs only), `WithPublicField` data reaches the client:

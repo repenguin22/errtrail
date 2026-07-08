@@ -4,29 +4,19 @@ Prioritized feature work toward production readiness / v1.0, split out of the
 2026-07-08 review. Each item is intended to be a separate, self-contained
 change (its own branch / PR).
 
-## P1 — features production users will ask for first
+All P1 feature work from the original review has shipped (core v0.2.0–v0.4.0,
+grpcerr v0.2.0–v0.3.0). What remains is hardening and ecosystem work.
 
-### 1. Reverse conversion: grpcerr.FromStatus / FromError
+## Hardening and ecosystem
 
-Convert a received `*status.Status` (or an error returned by a gRPC call)
-back into an `*errtrail.Error`, so clients of other services share the same
-Code taxonomy end to end. Map codes 0–16 one-to-one; anything else becomes
-`Unknown`.
-
-- Recover the custom code name from `ErrorInfo.Reason` when present
-  (attached by `ToStatus` when `grpcerr.Domain` is set — landed in
-  grpcerr/v0.2.0).
-
-## P2 — hardening and ecosystem
-
-### 2. Thread-safe or frozen code registry
+### 1. Thread-safe or frozen code registry
 
 `Register` currently relies on a documented contract ("call before the server
 starts"). Enforce it instead: copy-on-write via `atomic.Pointer[map]`, or
 freeze the table on first read and panic on late registration. Removes a
 whole class of subtle production races.
 
-### 3. Revisit the PublicMessage fallback for gRPC messages
+### 2. Revisit the PublicMessage fallback for gRPC messages
 
 `grpcerr.ToStatus` inherits `PublicMessage`'s `http.StatusText` fallback, so
 gRPC clients see HTTP wording ("Internal Server Error") and an empty message
@@ -34,13 +24,14 @@ for `Canceled` / custom codes. Consider falling back to the code name on the
 gRPC path instead. Behavior change on the wire — needs a minor version bump
 and a changelog entry.
 
-### 4. CHANGELOG and a v1.0 plan
+### 3. CHANGELOG and a v1.0 plan
 
 Adopters need a signal that the API is stable. Add `CHANGELOG.md` (Keep a
-Changelog format), backfill v0.1.x, and state the v1.0 criteria in the
-README (essentially: P1 items above settled, no open API questions).
+Changelog format), backfill the v0.x releases, and state the v1.0 criteria
+in the README (essentially: the P1 features have all shipped, so what's
+left is closing the open questions in this file).
 
-### 5. Coverage reporting in CI
+### 4. Coverage reporting in CI
 
 Coverage is already high (core 96.7% / problem 89.5% / grpcerr 100%); make it
 visible. Upload `go test -coverprofile` results in CI and add a badge next to

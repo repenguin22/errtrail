@@ -489,6 +489,23 @@ func ToStatus(err error) *status.Status
 // ToError returns ToStatus(err).Err(), for returning directly from a gRPC handler.
 // Returns nil when err is nil.
 func ToError(err error) error
+
+// FromError converts an error returned by a gRPC call into an
+// *errtrail.Error that wraps it (errors.Is/As keep seeing the original).
+// nil returns nil. Wire codes 0–16 map one-to-one; codes above 16 and
+// non-status errors become Unknown. A custom code is recovered from an
+// errdetails.ErrorInfo whose Reason names a locally registered code AND
+// whose registered gRPC code matches the wire code — the second condition
+// guards against foreign taxonomies reusing a local code name. The wire
+// message survives via the wrapped cause; it is NOT re-published as the
+// public message (call WithPublic explicitly to propagate it). The
+// recorded frame points inside grpcerr — wrap at the call site for a
+// caller frame.
+func FromError(err error) *errtrail.Error
+
+// FromStatus is FromError for a *status.Status you already hold.
+// Returns nil when st is nil or its code is OK.
+func FromStatus(st *status.Status) *errtrail.Error
 ```
 
 Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry; BadRequest can be built on the core's public fields, `WithPublicField` / `PublicFields`).

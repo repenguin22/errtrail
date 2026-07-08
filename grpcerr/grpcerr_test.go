@@ -1,6 +1,7 @@
 package grpcerr
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -176,6 +177,99 @@ func TestNilErrWithDomain(t *testing.T) {
 	}
 	if n := len(st.Details()); n != 0 {
 		t.Errorf("len(Details) = %d, want 0 on OK", n)
+	}
+}
+
+func TestFromErrorRoundTripBuiltin(t *testing.T) {
+	orig := errtrail.New(errtrail.NotFound, "row missing").WithPublic("User not found")
+	got := FromError(ToError(orig))
+	if code := errtrail.CodeOf(got); code != errtrail.NotFound {
+		t.Errorf("CodeOf = %v, want NotFound", code)
+	}
+}
+
+func TestFromErrorRecoversCustomCode(t *testing.T) {
+	registerRateLimited()
+	setDomain(t, "errtrail.test")
+
+	// On the wire: numeric code ResourceExhausted + ErrorInfo{Reason: RATE_LIMITED}.
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+	got := FromError(gerr)
+	if code := errtrail.CodeOf(got); code != rateLimited {
+		t.Errorf("CodeOf = %v, want rateLimited (recovered from Reason)", code)
+	}
+}
+
+func TestFromErrorCustomCodeWithoutDetails(t *testing.T) {
+	registerRateLimited()
+	// Domain unset: no ErrorInfo on the wire, so only the numeric code
+	// survives and the conversion degrades to ResourceExhausted.
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+	if code := errtrail.CodeOf(FromError(gerr)); code != errtrail.ResourceExhausted {
+		t.Errorf("CodeOf = %v, want ResourceExhausted", code)
+	}
+}
+
+func TestFromStatusRejectsMismatchedReason(t *testing.T) {
+	registerRateLimited()
+	// A foreign taxonomy might reuse the name RATE_LIMITED under a different
+	// numeric code. The registered gRPC code (ResourceExhausted) does not
+	// match the wire code (Internal), so recovery must not trigger.
+	st, err := status.New(codes.Internal, "boom").WithDetails(&errdetails.ErrorInfo{
+		Reason: "RATE_LIMITED",
+		Domain: "foreign.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := errtrail.CodeOf(FromStatus(st)); code != errtrail.Internal {
+		t.Errorf("CodeOf = %v, want Internal (mismatched Reason must be ignored)", code)
+	}
+}
+
+func TestFromStatusUnknownReason(t *testing.T) {
+	st, err := status.New(codes.NotFound, "gone").WithDetails(&errdetails.ErrorInfo{
+		Reason: "NO_SUCH_LOCAL_NAME",
+		Domain: "foreign.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := errtrail.CodeOf(FromStatus(st)); code != errtrail.NotFound {
+		t.Errorf("CodeOf = %v, want NotFound (numeric mapping)", code)
+	}
+}
+
+func TestFromStatusCodeAbove16(t *testing.T) {
+	st := status.New(codes.Code(99), "nonstandard")
+	if code := errtrail.CodeOf(FromStatus(st)); code != errtrail.Unknown {
+		t.Errorf("CodeOf = %v, want Unknown", code)
+	}
+}
+
+func TestFromErrorNilSafety(t *testing.T) {
+	if FromError(nil) != nil {
+		t.Error("FromError(nil) should be nil")
+	}
+	if FromStatus(nil) != nil {
+		t.Error("FromStatus(nil) should be nil")
+	}
+	if FromStatus(status.New(codes.OK, "")) != nil {
+		t.Error("FromStatus(OK) should be nil")
+	}
+}
+
+func TestFromErrorPreservesCause(t *testing.T) {
+	orig := errors.New("plain failure")
+	got := FromError(orig)
+	if code := errtrail.CodeOf(got); code != errtrail.Unknown {
+		t.Errorf("CodeOf = %v, want Unknown for a non-status error", code)
+	}
+	if !errors.Is(got, orig) {
+		t.Error("errors.Is should see the original error through the conversion")
+	}
+	if got.Error() != "plain failure" {
+		t.Errorf("Error() = %q, want the original message", got.Error())
 	}
 }
 
