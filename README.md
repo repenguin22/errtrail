@@ -129,6 +129,18 @@ _ = problem.Write(w, err, problem.Instance(r.URL.Path))
 //  "instance":"/users","status":400,"title":"Bad Request"}
 ```
 
+RFC 9457's `type` member (a URI reference identifying the problem type,
+defaulting to `about:blank`) is also supported, but opt-in: it's omitted by
+default because errtrail has no documentation site of its own to point `type`
+at. Set `problem.TypeURL` once at startup to derive one from the `Code`:
+
+```go
+problem.TypeURL = func(c errtrail.Code) string {
+    return "https://errors.example.com/" + c.String()
+}
+// Now From(err).Type == "https://errors.example.com/INVALID_ARGUMENT"
+```
+
 Over gRPC, set the service domain once at startup so custom code **names** (not
 just their numeric gRPC code) survive the wire as a machine-readable
 [`errdetails.ErrorInfo`](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/errdetails#ErrorInfo):
@@ -154,6 +166,39 @@ if err != nil {
     return nil, errtrail.Wrap(terr, "call user service")
 }
 ```
+
+There's no HTTP equivalent of `FromError` — gRPC codes map to `Code`
+one-to-one, but an HTTP status is inherently many-to-one (`400` could be
+`InvalidArgument`, `FailedPrecondition`, or `OutOfRange`), so a generic
+`FromHTTPStatus` would guess wrong as often as it guessed right. If you call
+another HTTP service, classify its response explicitly at the call site
+instead (e.g. `errtrail.Wrap(err, "call user service").WithCode(...)`, picking
+the `Code` from context you have and the library doesn't).
+
+### Multi-error validation (`errors.Join`)
+
+errtrail's inspection functions all walk an `errors.Join`-ed chain depth-first,
+visiting the first branch first — the same rule used for a plain `Wrap` chain,
+just applied per branch:
+
+```go
+a := errtrail.New(errtrail.InvalidArgument, "email invalid").WithPublicField("field", "email")
+b := errtrail.New(errtrail.InvalidArgument, "age invalid").WithPublicField("field", "age")
+joined := errors.Join(a, b)
+```
+
+- **`CodeOf` / `PublicMessage`** return the **first branch's** value (`a`'s here)
+  — a single response can only carry one HTTP/gRPC status, so the first error
+  wins by convention. If the branches disagree on `Code`, decide deliberately
+  (e.g. `WithCode` on the `Join` result, or pick the branch order) rather than
+  relying on which validator ran first.
+- **`Trace` / `Attrs`** collect **every branch**, so nothing is lost from logs.
+- **`PublicFields` collects every branch too, but a duplicate key keeps only
+  the first branch's value** — the same outermost-wins rule `Wrap` chains use.
+  In the example above, only `a`'s `"field": "email"` survives; `b`'s `"field":
+  "age"` is silently dropped. **Use distinct keys per validation error** (e.g.
+  key by field name, or collect a slice under one key such as `"errors"`)
+  rather than relying on the same key across joined errors.
 
 ### Inspecting the propagation path
 
@@ -244,6 +289,16 @@ slog.New(slog.NewJSONHandler(os.Stdout, nil)).
 Register your own codes (values `>= 100`; 0–99 are reserved) from `init`, or
 otherwise before the server starts — the registry is read concurrently once
 the server is running, so registering later is a data race.
+
+> **HTTP-first services often need custom codes.** The 17 built-in codes are
+> gRPC's, and `HTTPStatus` maps each one to a single fixed status — so they're
+> a many-to-one mapping from the HTTP side. `InvalidArgument` is always `400`,
+> for instance, even if your API would rather distinguish `400` from `422
+> Unprocessable Entity`, or `AlreadyExists`/`Aborted` both landing on `409`
+> when you'd want to tell them apart by status code alone. This doesn't break
+> anything — register a custom code with whatever HTTP status you need — but
+> if you're building an HTTP-only API, expect to reach for custom codes more
+> often than the 17 built-ins alone would suggest.
 
 ```go
 const RateLimited errtrail.Code = 100

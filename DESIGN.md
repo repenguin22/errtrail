@@ -24,7 +24,7 @@ A Go error library for web services (HTTP / gRPC).
 
 - Metadata such as a log-level hint — a retryable flag is supported as of v0.3.0 (`IsRetryable` / `Register`'s `Retryable` option, §3.3)
 - gRPC's rich `errdetails` beyond `ErrorInfo` (BadRequest, RetryInfo, etc.) — an opt-in `ErrorInfo` carrying the code name is supported via `grpcerr.Domain` (§9)
-- Reverse conversion from HTTP status back to `Code`
+- Reverse conversion from HTTP status back to `Code` — unlike gRPC's status codes (which map to `Code` one-to-one, making `grpcerr.FromError`/`FromStatus` well-defined, §9), an HTTP status is inherently many-to-one (e.g. `400` could be `InvalidArgument`, `FailedPrecondition`, or `OutOfRange`), so a generic reverse mapping would be lossy and guess wrong as often as not
 - gRPC interceptors, HTTP middleware
 - Internationalization (i18n)
 
