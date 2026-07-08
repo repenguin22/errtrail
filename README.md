@@ -54,6 +54,25 @@ domain once at startup:
 grpcerr.Domain = "myservice.example.com" // opt-in; empty (default) attaches nothing
 ```
 
+Public extension fields (RFC 9457 §3.2) carry structured, client-safe details
+— e.g. field-level validation errors — without leaking internals. Unlike
+`With` attrs (internal, logs only), `WithPublicField` data reaches the client:
+
+```go
+// At the source:
+err := errtrail.New(errtrail.InvalidArgument, "email failed regexp").
+    WithPublic("Validation failed").
+    WithPublicField("errors", []map[string]string{
+        {"detail": "must be a valid email address", "pointer": "#/email"},
+    })
+
+// At the boundary — instance comes from the request, not the error:
+_ = problem.Write(w, err, problem.Instance(r.URL.Path))
+// {"code":"INVALID_ARGUMENT","detail":"Validation failed",
+//  "errors":[{"detail":"must be a valid email address","pointer":"#/email"}],
+//  "instance":"/users","status":400,"title":"Bad Request"}
+```
+
 Inspect the propagation path with `%+v`:
 
 ```

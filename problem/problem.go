@@ -15,11 +15,72 @@ import (
 // member (RFC 9457 §3.2) that conveys errtrail's Code name to clients in a
 // machine-readable form.
 type Problem struct {
-	Type   string `json:"type,omitempty"` // Omitted means "about:blank", per RFC.
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	Code   string `json:"code"`
+	Type     string `json:"type,omitempty"` // Omitted means "about:blank", per RFC.
+	Title    string `json:"title"`
+	Status   int    `json:"status"`
+	Detail   string `json:"detail,omitempty"`
+	Instance string `json:"instance,omitempty"` // URI for this specific occurrence.
+	Code     string `json:"code"`
+
+	// Extensions holds additional extension members (RFC 9457 §3.2),
+	// flattened into the top-level JSON object by MarshalJSON. From fills
+	// it with errtrail.PublicFields(err). Entries whose key is empty or
+	// collides with a defined member (type, title, status, detail,
+	// instance, code) are silently dropped rather than allowed to corrupt
+	// the defined members.
+	Extensions map[string]any `json:"-"`
+}
+
+// reservedKeys are the members serialized from Problem's struct fields;
+// Extensions entries with these keys are dropped.
+var reservedKeys = map[string]bool{
+	"type": true, "title": true, "status": true,
+	"detail": true, "instance": true, "code": true,
+}
+
+// MarshalJSON flattens Extensions into the top-level object alongside the
+// defined members. The explicit field list below must be kept in sync with
+// the Problem struct. encoding/json sorts map keys, so output is
+// deterministic.
+//
+// It must stay a value receiver despite the copy cost: json.Marshal is
+// called on Problem values (e.g. json.Marshal(From(err))), which would
+// silently skip a pointer-receiver MarshalJSON.
+//
+//nolint:gocritic // hugeParam — value receiver is required, see above.
+func (p Problem) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, 6+len(p.Extensions))
+	for k, v := range p.Extensions {
+		if k == "" || reservedKeys[k] {
+			continue
+		}
+		m[k] = v
+	}
+	if p.Type != "" {
+		m["type"] = p.Type
+	}
+	m["title"] = p.Title
+	m["status"] = p.Status
+	if p.Detail != "" {
+		m["detail"] = p.Detail
+	}
+	if p.Instance != "" {
+		m["instance"] = p.Instance
+	}
+	m["code"] = p.Code
+	return json.Marshal(m)
+}
+
+// Option customizes the Problem built by From. Options are applied last,
+// after every derived member is set.
+type Option func(*Problem)
+
+// Instance returns an Option that sets the problem's instance member — a
+// URI identifying this specific occurrence, typically the request path.
+// It is boundary information (from the request), which is why it's an
+// Option here rather than something stored on the error.
+func Instance(uri string) Option {
+	return func(p *Problem) { p.Instance = uri }
 }
 
 // TypeURL is an optional hook that derives a type URI from a Code. If you
@@ -27,18 +88,22 @@ type Problem struct {
 // concurrent reads.
 var TypeURL func(errtrail.Code) string
 
-// From builds a Problem from err. It never includes internal information.
+// From builds a Problem from err. It never includes internal information —
+// extension members come only from data explicitly marked public via
+// errtrail's WithPublicField, never from attrs or internal messages.
 //
-//	Status = errtrail.CodeOf(err).HTTPStatus()
-//	Title  = http.StatusText(Status), or the code name when http.StatusText
-//	         does not know the status (e.g. Canceled's 499)
-//	Detail = errtrail.PublicMessage(err), or empty if it equals Title (avoids redundancy)
-//	Code   = errtrail.CodeOf(err).String()
-//	Type   = TypeURL(code) if TypeURL is set, otherwise empty
+//	Status     = errtrail.CodeOf(err).HTTPStatus()
+//	Title      = http.StatusText(Status), or the code name when http.StatusText
+//	             does not know the status (e.g. Canceled's 499)
+//	Detail     = errtrail.PublicMessage(err), or empty if it equals Title (avoids redundancy)
+//	Code       = errtrail.CodeOf(err).String()
+//	Type       = TypeURL(code) if TypeURL is set, otherwise empty
+//	Extensions = errtrail.PublicFields(err)
 //
-// Problem responses describe errors; passing a nil err yields a 200 "OK"
-// problem, which is almost certainly a caller bug.
-func From(err error) Problem {
+// Options (e.g. Instance) are applied last. Problem responses describe
+// errors; passing a nil err yields a 200 "OK" problem, which is almost
+// certainly a caller bug.
+func From(err error, opts ...Option) Problem {
 	code := errtrail.CodeOf(err)
 	status := code.HTTPStatus()
 	title := http.StatusText(status)
@@ -55,21 +120,27 @@ func From(err error) Problem {
 	}
 
 	p := Problem{
-		Title:  title,
-		Status: status,
-		Detail: detail,
-		Code:   code.String(),
+		Title:      title,
+		Status:     status,
+		Detail:     detail,
+		Code:       code.String(),
+		Extensions: errtrail.PublicFields(err),
 	}
 	if TypeURL != nil {
 		p.Type = TypeURL(code)
 	}
+	for _, o := range opts {
+		o(&p)
+	}
 	return p
 }
 
-// Write writes From(err) to w as application/problem+json. If JSON encoding
-// fails, it writes the status and returns that error.
-func Write(w http.ResponseWriter, err error) error {
-	p := From(err)
+// Write writes From(err, opts...) to w as application/problem+json. If JSON
+// encoding fails (possible when a public field holds a value
+// encoding/json cannot marshal), it writes a bare 500 and returns that
+// error.
+func Write(w http.ResponseWriter, err error, opts ...Option) error {
+	p := From(err, opts...)
 	body, mErr := json.Marshal(p)
 	if mErr != nil {
 		w.WriteHeader(http.StatusInternalServerError)

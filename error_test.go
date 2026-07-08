@@ -116,6 +116,26 @@ func TestImmutabilityAttrsNoSharing(t *testing.T) {
 	}
 }
 
+func TestImmutabilityPublicFieldsNoSharing(t *testing.T) {
+	e := New(InvalidArgument, "x").WithPublicField("a", 1)
+	// Derive two errors from e; appending to one must not leak into the other.
+	b := e.WithPublicField("b", 2)
+	c := e.WithPublicField("c", 3)
+
+	if got := PublicFields(e); len(got) != 1 {
+		t.Errorf("e fields = %v, want 1 entry", got)
+	}
+	if got := PublicFields(b); len(got) != 2 || got["b"] != 2 {
+		t.Errorf("b fields = %v", got)
+	}
+	if got := PublicFields(c); len(got) != 2 || got["c"] != 3 {
+		t.Errorf("c fields = %v", got)
+	}
+	if got := PublicFields(b); got["c"] != nil {
+		t.Errorf("c leaked into b: %v", got)
+	}
+}
+
 func TestNilReceiverSafety(t *testing.T) {
 	var e *Error
 	if e.WithCode(Internal) != nil {
@@ -126,6 +146,9 @@ func TestNilReceiverSafety(t *testing.T) {
 	}
 	if e.With(slog.Int("a", 1)) != nil {
 		t.Error("nil.With should be nil")
+	}
+	if e.WithPublicField("a", 1) != nil {
+		t.Error("nil.WithPublicField should be nil")
 	}
 	if e.Error() != "<nil>" {
 		t.Errorf("nil.Error() = %q, want <nil>", e.Error())

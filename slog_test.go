@@ -11,7 +11,8 @@ func TestLogValueJSON(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	inner := New(NotFound, "query user").WithPublic("secret public")
+	inner := New(NotFound, "query user").WithPublic("secret public").
+		WithPublicField("client_hint", "for responses only")
 	err := Wrap(inner, "get profile").With(slog.Int("user_id", 42))
 
 	logger.Error("request failed", slog.Any("error", err))
@@ -34,9 +35,12 @@ func TestLogValueJSON(t *testing.T) {
 	if errObj["user_id"] != float64(42) {
 		t.Errorf("error.user_id = %v", errObj["user_id"])
 	}
-	// public must never appear in logs.
+	// public and public fields must never appear in logs.
 	if _, exists := errObj["public"]; exists {
 		t.Error("public must not appear in logs")
+	}
+	if _, exists := errObj["client_hint"]; exists {
+		t.Error("public fields must not appear in logs")
 	}
 	// trace is an array of strings.
 	tr, ok := errObj["trace"].([]any)

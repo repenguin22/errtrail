@@ -85,6 +85,27 @@ func PublicMessage(err error) string {
 	return http.StatusText(CodeOf(err).HTTPStatus())
 }
 
+// PublicFields walks err's chain from the outside in and collects the
+// public fields attached via WithPublicField into a map. For a duplicate
+// key, the outermost value wins (consistent with CodeOf and PublicMessage:
+// layers closer to the boundary override). Returns nil if no fields are
+// found. Never includes attrs or internal messages.
+func PublicFields(err error) map[string]any {
+	var m map[string]any
+	walk(err, func(e *Error) bool {
+		for _, f := range e.fields {
+			if m == nil {
+				m = make(map[string]any)
+			}
+			if _, ok := m[f.key]; !ok {
+				m[f.key] = f.value
+			}
+		}
+		return true
+	})
+	return m
+}
+
 // Trace returns the frames of every *Error in err's chain, ordered from the
 // outermost (where it was last wrapped) to the innermost (where it
 // originated). Returns nil if no *Error is found.
@@ -112,17 +133,19 @@ func Attrs(err error) []slog.Attr {
 // collected holds everything the %+v formatter and the slog LogValuer need,
 // gathered in a single pass instead of one walk per field.
 type collected struct {
-	code   Code        // resolved code, or Unknown if none is set
-	public string      // first explicitly-set public message, "" if none
-	trace  []Frame     // every frame, outermost to innermost
-	attrs  []slog.Attr // every attr, outermost to innermost
+	code   Code          // resolved code, or Unknown if none is set
+	public string        // first explicitly-set public message, "" if none
+	trace  []Frame       // every frame, outermost to innermost
+	attrs  []slog.Attr   // every attr, outermost to innermost
+	fields []publicField // every public field, outermost to innermost (duplicates kept)
 }
 
 // collect walks err's chain once, gathering the resolved code, the first
-// public message, the full trace, and all attrs. The code and public results
-// match CodeOf and the "no fallback" public lookup; trace and attrs match
-// Trace and Attrs. It exists so the formatter and logger don't walk the chain
-// several times over.
+// public message, the full trace, all attrs, and all public fields. The code
+// and public results match CodeOf and the "no fallback" public lookup; trace
+// and attrs match Trace and Attrs. fields keeps duplicates in walk order —
+// display-only, unlike PublicFields' outermost-wins map. It exists so the
+// formatter and logger don't walk the chain several times over.
 func collect(err error) collected {
 	c := collected{code: Unknown}
 	haveCode := false
@@ -136,6 +159,7 @@ func collect(err error) collected {
 		}
 		c.trace = append(c.trace, resolveFrame(e.pc, e.msg))
 		c.attrs = append(c.attrs, e.attrs...)
+		c.fields = append(c.fields, e.fields...)
 		return true
 	})
 	return c

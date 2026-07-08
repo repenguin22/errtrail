@@ -95,6 +95,109 @@ func TestWrite(t *testing.T) {
 	}
 }
 
+func TestFromExtensionsFlattened(t *testing.T) {
+	err := errtrail.New(errtrail.InvalidArgument, "bad email").
+		WithPublicField("field", "email").
+		WithPublicField("errors", []map[string]string{{"detail": "must be valid", "pointer": "#/email"}})
+	p := From(err)
+
+	body, mErr := json.Marshal(p)
+	if mErr != nil {
+		t.Fatalf("marshal: %v", mErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(body, &raw); e != nil {
+		t.Fatal(e)
+	}
+	// Extension members appear at the top level, alongside defined members.
+	if raw["field"] != "email" {
+		t.Errorf("field = %v", raw["field"])
+	}
+	if _, ok := raw["errors"].([]any); !ok {
+		t.Errorf("errors = %v (%T)", raw["errors"], raw["errors"])
+	}
+	if raw["status"] != float64(400) || raw["code"] != "INVALID_ARGUMENT" {
+		t.Errorf("defined members broken: %v", raw)
+	}
+}
+
+func TestMarshalDropsReservedAndEmptyExtensionKeys(t *testing.T) {
+	err := errtrail.New(errtrail.InvalidArgument, "x").
+		WithPublicField("status", 999). // reserved — must not corrupt the real status
+		WithPublicField("", "no key").  // empty — dropped
+		WithPublicField("ok", "kept")
+	body, mErr := json.Marshal(From(err))
+	if mErr != nil {
+		t.Fatalf("marshal: %v", mErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(body, &raw); e != nil {
+		t.Fatal(e)
+	}
+	if raw["status"] != float64(400) {
+		t.Errorf("status = %v, want 400 (reserved key must win)", raw["status"])
+	}
+	if _, ok := raw[""]; ok {
+		t.Error("empty extension key should be dropped")
+	}
+	if raw["ok"] != "kept" {
+		t.Errorf("ok = %v", raw["ok"])
+	}
+}
+
+func TestInstanceOption(t *testing.T) {
+	err := errtrail.New(errtrail.NotFound, "x")
+
+	p := From(err, Instance("/users/42"))
+	if p.Instance != "/users/42" {
+		t.Errorf("Instance = %q", p.Instance)
+	}
+
+	// Without the option, the instance key is absent from the JSON entirely.
+	body, mErr := json.Marshal(From(err))
+	if mErr != nil {
+		t.Fatalf("marshal: %v", mErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(body, &raw); e != nil {
+		t.Fatal(e)
+	}
+	if _, ok := raw["instance"]; ok {
+		t.Error("instance should be omitted when unset")
+	}
+}
+
+func TestWritePassesOptions(t *testing.T) {
+	err := errtrail.New(errtrail.NotFound, "x")
+	rec := httptest.NewRecorder()
+	if wErr := Write(rec, err, Instance("/users/42")); wErr != nil {
+		t.Fatalf("Write returned error: %v", wErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(rec.Body.Bytes(), &raw); e != nil {
+		t.Fatal(e)
+	}
+	if raw["instance"] != "/users/42" {
+		t.Errorf("instance = %v", raw["instance"])
+	}
+}
+
+func TestWriteUnmarshalableExtension(t *testing.T) {
+	// A public field can hold a value encoding/json cannot marshal; Write
+	// must fall back to a bare 500 and surface the error.
+	err := errtrail.New(errtrail.Internal, "x").WithPublicField("bad", make(chan int))
+	rec := httptest.NewRecorder()
+	if wErr := Write(rec, err); wErr == nil {
+		t.Fatal("Write should return the marshal error")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("body should be empty, got %q", rec.Body.String())
+	}
+}
+
 func TestWriteJSONTagOmitsEmptyType(t *testing.T) {
 	err := errtrail.New(errtrail.Internal, "x")
 	rec := httptest.NewRecorder()

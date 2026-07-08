@@ -11,12 +11,20 @@ import (
 // copies, so a single *Error can be safely shared and derived from across
 // goroutines.
 type Error struct {
-	code   Code        // Zero value OK means "unset"; CodeOf delegates to the inner Error.
-	msg    string      // Internal message (for logs). Never shown to a client.
-	public string      // Public message shown to clients. Empty means unset.
-	cause  error       // The wrapped error. May be nil.
-	pc     uintptr     // One recorded caller frame (resolved lazily). 0 means "none".
-	attrs  []slog.Attr // Structured-logging attributes.
+	code   Code          // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+	msg    string        // Internal message (for logs). Never shown to a client.
+	public string        // Public message shown to clients. Empty means unset.
+	cause  error         // The wrapped error. May be nil.
+	pc     uintptr       // One recorded caller frame (resolved lazily). 0 means "none".
+	attrs  []slog.Attr   // Structured-logging attributes (internal, logs only).
+	fields []publicField // Public extension fields (client-visible).
+}
+
+// publicField is one client-visible key-value pair attached via
+// WithPublicField. Kept separate from attrs, which are internal-only.
+type publicField struct {
+	key   string
+	value any
 }
 
 // New creates a new error, recording one caller frame.
@@ -91,6 +99,25 @@ func (e *Error) With(attrs ...slog.Attr) *Error {
 	cp := *e
 	// Clip before appending so the copy never shares a backing array with e.attrs.
 	cp.attrs = append(slices.Clip(e.attrs), attrs...)
+	return &cp
+}
+
+// WithPublicField returns a copy with a public key-value field appended.
+// Does not record a new frame.
+//
+// Unlike With (whose attrs go to logs only), public fields are
+// client-visible: problem.From emits them as RFC 9457 extension members.
+// Never put internal data in a public field. Like the public message, they
+// are excluded from LogValue.
+//
+// Example: e.WithPublicField("errors", violations)
+func (e *Error) WithPublicField(key string, value any) *Error {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	// Clip before appending so the copy never shares a backing array with e.fields.
+	cp.fields = append(slices.Clip(e.fields), publicField{key: key, value: value})
 	return &cp
 }
 

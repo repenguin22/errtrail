@@ -12,8 +12,8 @@
 //     costs roughly 100–150ns / 1 alloc).
 //   - Fully compatible with the standard errors package (Is / As / Unwrap /
 //     Join).
-//   - Internal messages (for logs) are separated from public messages (for
-//     clients).
+//   - Internal messages (for logs) are separated from public messages and
+//     public extension fields (for clients).
 //   - Implements slog.LogValuer, so structured logs get code, trace, and
 //     attrs for free.
 //

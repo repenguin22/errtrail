@@ -3,6 +3,7 @@ package errtrail
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 )
 
@@ -118,6 +119,47 @@ func TestJoinPublicFirstBranch(t *testing.T) {
 	// a has no public message, so the walk moves on to b and finds "boom".
 	if got := PublicMessage(joined); got != "boom" {
 		t.Errorf("PublicMessage(join) = %q, want boom", got)
+	}
+}
+
+func TestPublicFieldsThroughChain(t *testing.T) {
+	inner := New(InvalidArgument, "bad email").WithPublicField("field", "email")
+	mid := fmt.Errorf("validate: %w", inner) // survives a std fmt layer
+	outer := Wrap(mid, "create user").WithPublicField("request_id", "r-1")
+
+	got := PublicFields(outer)
+	if len(got) != 2 {
+		t.Fatalf("fields = %v, want 2 entries", got)
+	}
+	if got["field"] != "email" || got["request_id"] != "r-1" {
+		t.Errorf("fields = %v", got)
+	}
+}
+
+func TestPublicFieldsOutermostWins(t *testing.T) {
+	inner := New(InvalidArgument, "x").WithPublicField("field", "inner")
+	outer := Wrap(inner, "y").WithPublicField("field", "outer")
+	if got := PublicFields(outer); got["field"] != "outer" {
+		t.Errorf(`fields["field"] = %v, want "outer"`, got["field"])
+	}
+}
+
+func TestPublicFieldsNone(t *testing.T) {
+	if PublicFields(nil) != nil {
+		t.Error("PublicFields(nil) should be nil")
+	}
+	if PublicFields(errors.New("plain")) != nil {
+		t.Error("PublicFields(plain) should be nil")
+	}
+	if PublicFields(New(Internal, "no fields")) != nil {
+		t.Error("PublicFields(no fields) should be nil")
+	}
+}
+
+func TestPublicFieldsNeverIncludesAttrs(t *testing.T) {
+	e := New(Internal, "x").With(slog.String("secret", "hunter2"))
+	if got := PublicFields(e); got != nil {
+		t.Errorf("attrs leaked into public fields: %v", got)
 	}
 }
 

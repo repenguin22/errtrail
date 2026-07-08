@@ -28,7 +28,8 @@ func TestFormatQ(t *testing.T) {
 }
 
 func TestFormatPlusV(t *testing.T) {
-	inner := New(NotFound, "query user").WithPublic("User not found")
+	inner := New(NotFound, "query user").WithPublic("User not found").
+		WithPublicField("resource", "user")
 	outer := Wrap(inner, "get profile").With(slog.Int("user_id", 42))
 
 	out := fmt.Sprintf("%+v", outer)
@@ -39,6 +40,7 @@ func TestFormatPlusV(t *testing.T) {
 	}
 	mustContain(t, out, "\n  code: NOT_FOUND")
 	mustContain(t, out, "\n  public: User not found")
+	mustContain(t, out, "\n  public.fields: resource=user")
 	mustContain(t, out, "\n  attrs: user_id=42")
 	mustContain(t, out, "\n  trace:")
 
@@ -50,10 +52,13 @@ func TestFormatPlusV(t *testing.T) {
 }
 
 func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
-	e := New(Internal, "boom") // no public, no attrs
+	e := New(Internal, "boom") // no public, no fields, no attrs
 	out := fmt.Sprintf("%+v", e)
 	if strings.Contains(out, "public:") {
 		t.Error("public line should be omitted when unset")
+	}
+	if strings.Contains(out, "public.fields:") {
+		t.Error("public.fields line should be omitted when empty")
 	}
 	if strings.Contains(out, "attrs:") {
 		t.Error("attrs line should be omitted when empty")

@@ -11,7 +11,7 @@ import (
 //
 //	%s, %v  same as e.Error()
 //	%q      quoted e.Error()
-//	%+v     multi-line form including code, public, attrs, and trace
+//	%+v     multi-line form including code, public, public.fields, attrs, and trace
 func (e *Error) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
@@ -30,10 +30,10 @@ func (e *Error) Format(s fmt.State, verb rune) {
 	}
 }
 
-// detailed builds the multi-line %+v output. It gathers code, public, attrs,
-// and trace in a single pass (collect) rather than walking the chain once per
-// section. The public line is printed only when a public message was
-// explicitly set — collect never yields a fallback value here.
+// detailed builds the multi-line %+v output. It gathers code, public, public
+// fields, attrs, and trace in a single pass (collect) rather than walking the
+// chain once per section. The public line is printed only when a public
+// message was explicitly set — collect never yields a fallback value here.
 func (e *Error) detailed() string {
 	if e == nil {
 		return "<nil>"
@@ -48,6 +48,19 @@ func (e *Error) detailed() string {
 	if c.public != "" {
 		b.WriteString("\n  public: ")
 		b.WriteString(c.public)
+	}
+
+	// Client-visible extension fields, in walk order with duplicates kept
+	// (like attrs); PublicFields' outermost-wins dedup applies only at
+	// response generation.
+	if len(c.fields) > 0 {
+		b.WriteString("\n  public.fields:")
+		for _, f := range c.fields {
+			b.WriteByte(' ')
+			b.WriteString(f.key)
+			b.WriteByte('=')
+			fmt.Fprint(&b, f.value)
+		}
 	}
 
 	if len(c.attrs) > 0 {

@@ -194,6 +194,13 @@ func (e *Error) WithPublic(msg string) *Error
 // With returns a copy with the given slog.Attr values appended.
 // Example: e.With(slog.String("user_id", id), slog.Int("attempt", n))
 func (e *Error) With(attrs ...slog.Attr) *Error
+
+// WithPublicField returns a copy with a public key-value field appended.
+// Unlike With (attrs are internal, logs only), public fields are
+// client-visible: problem.From emits them as RFC 9457 extension members.
+// Never put internal data in a public field. Like the public message,
+// they are excluded from LogValue.
+func (e *Error) WithPublicField(key string, value any) *Error
 ```
 
 Every builder method and every accessor below is **nil-receiver safe** (returns nil / a zero value when called on nil). This is specified because `Wrap` can return nil, and chained calls must not panic as a result.
@@ -245,6 +252,13 @@ func Trace(err error) []Frame
 // to innermost. Duplicate keys are not deduplicated (left to slog's own
 // behavior).
 func Attrs(err error) []slog.Attr
+
+// PublicFields collects the public fields (WithPublicField) of every
+// *Error in the chain into a map. For a duplicate key, the outermost value
+// wins (consistent with CodeOf and PublicMessage: layers closer to the
+// boundary override). Returns nil if none are found. Never includes attrs
+// or internal messages.
+func PublicFields(err error) map[string]any
 ```
 
 ### 5.1 Frame
@@ -295,6 +309,7 @@ func (e *Error) Format(s fmt.State, verb rune)
 get profile: query user: sql: no rows in result set
   code: NOT_FOUND
   public: User not found
+  public.fields: resource=user
   attrs: user_id=42 attempt=3
   trace:
     example.com/app/service.(*UserService).Profile (/src/app/service/user.go:88): get profile
@@ -304,6 +319,7 @@ get profile: query user: sql: no rows in result set
 - Line 1: `e.Error()` (the concatenated message across the whole chain)
 - `code:` line: `CodeOf(e).String()`
 - `public:` line: printed only when a public message was explicitly set (never a fallback value)
+- `public.fields:` line: omitted if no public fields; `key=value` pairs in walk order with duplicates kept (PublicFields' outermost-wins dedup applies only at response generation)
 - `attrs:` line: omitted entirely if `Attrs(e)` is empty; `key=value` pairs separated by a single space
 - `trace:` and below: one line per Frame in `Trace(e)`, via `Frame.String()`; the whole `trace:` section is omitted if empty
 - Indentation is 2 spaces; trace entries are indented 4 spaces
@@ -326,7 +342,7 @@ Contents of the returned group:
 | `trace` | []string | `Frame.String()` for each element of `Trace(e)` |
 | (attrs) | — | `Attrs(e)`, spread directly into the group |
 
-`public` is never included in logs (logs are for internal use; public is exclusively for response generation).
+`public` and the public fields (`WithPublicField`) are never included in logs (logs are for internal use; both are exclusively for response generation).
 
 Usage example:
 
@@ -349,32 +365,58 @@ Note: if the err passed to `slog.Any("error", err)` is not a `*Error` (a plain e
 // Code is an extension member (RFC 9457 §3.2) conveying errtrail's Code
 // name in machine-readable form.
 type Problem struct {
-    Type   string `json:"type,omitempty"`   // Omitted means "about:blank", per RFC.
-    Title  string `json:"title"`
-    Status int    `json:"status"`
-    Detail string `json:"detail,omitempty"`
-    Code   string `json:"code"`
+    Type     string `json:"type,omitempty"`     // Omitted means "about:blank", per RFC.
+    Title    string `json:"title"`
+    Status   int    `json:"status"`
+    Detail   string `json:"detail,omitempty"`
+    Instance string `json:"instance,omitempty"` // URI for this specific occurrence.
+    Code     string `json:"code"`
+
+    // Extensions holds additional extension members (RFC 9457 §3.2),
+    // flattened into the top-level JSON object by MarshalJSON. From fills
+    // it with errtrail.PublicFields(err). Entries whose key is empty or
+    // collides with a defined member (type, title, status, detail,
+    // instance, code) are silently dropped.
+    Extensions map[string]any `json:"-"`
 }
 
+// MarshalJSON flattens Extensions alongside the defined members. It must
+// stay a value receiver: json.Marshal is called on Problem values, which
+// would silently skip a pointer-receiver MarshalJSON.
+func (p Problem) MarshalJSON() ([]byte, error)
+
+// Option customizes the Problem built by From; applied last.
+type Option func(*Problem)
+
+// Instance sets the instance member — a URI identifying this specific
+// occurrence, typically the request path. Boundary information (from the
+// request), which is why it's an Option rather than stored on the error.
+func Instance(uri string) Option
+
 // From builds a Problem from err.
-//   Status = errtrail.CodeOf(err).HTTPStatus()
-//   Title  = http.StatusText(Status)
-//   Detail = errtrail.PublicMessage(err) — empty if it equals Title (avoids redundancy)
-//   Code   = errtrail.CodeOf(err).String()
-//   Type   = TypeURL(CodeOf(err)) if TypeURL is set, otherwise empty
-// Never includes the internal message, attrs, or trace.
-func From(err error) Problem
+//   Status     = errtrail.CodeOf(err).HTTPStatus()
+//   Title      = http.StatusText(Status), or the code name when http.StatusText
+//                does not know the status (e.g. Canceled's 499)
+//   Detail     = errtrail.PublicMessage(err) — empty if it equals Title (avoids redundancy)
+//   Code       = errtrail.CodeOf(err).String()
+//   Type       = TypeURL(CodeOf(err)) if TypeURL is set, otherwise empty
+//   Extensions = errtrail.PublicFields(err)
+// Never includes the internal message, attrs, or trace — extension members
+// come only from data explicitly marked public via WithPublicField.
+func From(err error, opts ...Option) Problem
 
 // TypeURL is an optional hook that derives a type URI from a Code.
 // A package variable. If you set it, do so before the server starts
 // (concurrent writes are not supported).
 var TypeURL func(errtrail.Code) string
 
-// Write writes From(err) to w as application/problem+json.
+// Write writes From(err, opts...) to w as application/problem+json.
 //   - Sets the Content-Type: application/problem+json header
 //   - Calls WriteHeader(p.Status)
-//   - Returns any json.Encode failure as an error rather than swallowing it
-func Write(w http.ResponseWriter, err error) error
+//   - Returns any json.Marshal failure as an error rather than swallowing it
+//     (reachable when a public field holds a value json cannot marshal;
+//     writes a bare 500 in that case)
+func Write(w http.ResponseWriter, err error, opts ...Option) error
 ```
 
 Usage example:
@@ -421,7 +463,7 @@ func ToStatus(err error) *status.Status
 func ToError(err error) error
 ```
 
-Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — RetryInfo needs retryability metadata, BadRequest needs public field data; neither exists yet).
+Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — RetryInfo needs retryability metadata, which doesn't exist yet; BadRequest can now be built on the core's public fields, `WithPublicField` / `PublicFields`).
 
 Usage example:
 
