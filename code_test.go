@@ -93,3 +93,27 @@ func TestRegisterPanicsOnDuplicate(t *testing.T) {
 	}()
 	Register(dup, "DUP2", 500, 2)
 }
+
+func TestRegisterValidatesArguments(t *testing.T) {
+	cases := []struct {
+		desc       string
+		name       string
+		httpStatus int
+		grpcCode   uint32
+	}{
+		{"empty name", "", 500, 2},
+		{"httpStatus below 100", "BAD", 0, 2},
+		{"httpStatus above 599", "BAD", 600, 2},
+		{"grpcCode above 16", "BAD", 500, 17},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("expected panic for %s", c.desc)
+				}
+			}()
+			Register(Code(102), c.name, c.httpStatus, c.grpcCode)
+		})
+	}
+}

@@ -38,6 +38,18 @@ func TestFromDetailOmittedWhenEqualTitle(t *testing.T) {
 	}
 }
 
+func TestFromTitleFallsBackToCodeName(t *testing.T) {
+	// http.StatusText(499) is "", so the title falls back to the code name.
+	err := errtrail.New(errtrail.Canceled, "ctx canceled")
+	p := From(err)
+	if p.Status != 499 {
+		t.Errorf("Status = %d, want 499", p.Status)
+	}
+	if p.Title != "CANCELED" {
+		t.Errorf("Title = %q, want CANCELED", p.Title)
+	}
+}
+
 func TestFromNeverLeaksInternal(t *testing.T) {
 	err := errtrail.New(errtrail.Internal, "db password = hunter2")
 	p := From(err)

@@ -73,10 +73,23 @@ var codes = map[Code]codeInfo{
 // before the server starts — calling it afterward races with other
 // goroutines reading Code.
 //
-// Panics if c is below customCodeMin (100), or if c is already registered.
+// Panics if c is below customCodeMin (100), if c is already registered, if
+// name is empty, if httpStatus is outside [100, 599] (an out-of-range status
+// would otherwise panic inside http.ResponseWriter.WriteHeader at request
+// time, far from the cause), or if grpcCode is above 16 (gRPC defines codes
+// 0–16; anything else is not portable across clients).
 func Register(c Code, name string, httpStatus int, grpcCode uint32) {
 	if c < customCodeMin {
 		panic("errtrail: custom code must be >= 100, got " + strconv.FormatUint(uint64(c), 10))
+	}
+	if name == "" {
+		panic("errtrail: code name must not be empty")
+	}
+	if httpStatus < 100 || httpStatus > 599 {
+		panic("errtrail: httpStatus must be in [100, 599], got " + strconv.Itoa(httpStatus))
+	}
+	if grpcCode > 16 {
+		panic("errtrail: grpcCode must be a gRPC code (0-16), got " + strconv.FormatUint(uint64(grpcCode), 10))
 	}
 	if _, ok := codes[c]; ok {
 		panic("errtrail: code already registered: " + strconv.FormatUint(uint64(c), 10))

@@ -40,6 +40,13 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+      - name: use the local core module
+        # grpcerr's go.mod pins the released errtrail; point it at the
+        # working tree so a core change that breaks grpcerr fails here,
+        # not after the next tag.
+        run: |
+          go mod edit -replace github.com/repenguin22/errtrail=..
+          go mod tidy
       - name: vet
         run: go vet ./...
       - name: test
@@ -65,6 +72,13 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: use the local core module (grpcerr)
+        # Same replace as the grpcerr test job: lint HEAD against HEAD.
+        if: matrix.module == 'grpcerr'
+        working-directory: grpcerr
+        run: |
+          go mod edit -replace github.com/repenguin22/errtrail=..
+          go mod tidy
       - name: lint
         working-directory: ${{ matrix.module }}
         run: golangci-lint run --config "${{ github.workspace }}/.golangci.yml" ./...
@@ -87,6 +101,14 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: use the local core module (grpcerr)
+        # govulncheck builds the packages, so it needs the same replace as
+        # the test and lint jobs to analyze HEAD against HEAD.
+        if: matrix.module == 'grpcerr'
+        working-directory: grpcerr
+        run: |
+          go mod edit -replace github.com/repenguin22/errtrail=..
+          go mod tidy
       - name: govulncheck
         working-directory: ${{ matrix.module }}
         run: govulncheck ./...

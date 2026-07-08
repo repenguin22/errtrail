@@ -168,14 +168,17 @@ func Newf(code Code, format string, args ...any) *Error
 // Wrap wraps err, recording one caller frame.
 // The code is left unset (OK), so CodeOf delegates to the Code further
 // down the chain. To change the code, use Wrap(...).WithCode(c).
-// Returns nil when err is nil (so callers can skip the if err != nil check).
+// Returns nil when err is nil, keeping chained builder calls safe. The
+// return type is *Error, so a function declared to return error must keep
+// its if err != nil guard — returning the nil *Error through an error
+// interface yields a non-nil error (the typed-nil footgun).
 func Wrap(err error, msg string) *Error
 
 // Wrapf is the fmt.Sprintf form of Wrap. Likewise returns nil when err is nil.
 func Wrapf(err error, format string, args ...any) *Error
 ```
 
-Frame recording captures a single pc via `runtime.Callers(2, pc[:1])`. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost down to tens of nanoseconds with minimal allocation.
+Frame recording captures a single pc via a shared `caller()` helper — `runtime.Callers(3, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost down to tens of nanoseconds with minimal allocation.
 
 ### 4.2 Builder methods
 

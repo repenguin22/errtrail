@@ -30,14 +30,24 @@ var TypeURL func(errtrail.Code) string
 // From builds a Problem from err. It never includes internal information.
 //
 //	Status = errtrail.CodeOf(err).HTTPStatus()
-//	Title  = http.StatusText(Status)
+//	Title  = http.StatusText(Status), or the code name when http.StatusText
+//	         does not know the status (e.g. Canceled's 499)
 //	Detail = errtrail.PublicMessage(err), or empty if it equals Title (avoids redundancy)
 //	Code   = errtrail.CodeOf(err).String()
 //	Type   = TypeURL(code) if TypeURL is set, otherwise empty
+//
+// Problem responses describe errors; passing a nil err yields a 200 "OK"
+// problem, which is almost certainly a caller bug.
 func From(err error) Problem {
 	code := errtrail.CodeOf(err)
 	status := code.HTTPStatus()
 	title := http.StatusText(status)
+	if title == "" {
+		// http.StatusText knows nothing about non-standard statuses such as
+		// Canceled's 499, and RFC 9457 expects title to be a human-readable
+		// summary — fall back to the code name rather than leaving it empty.
+		title = code.String()
+	}
 
 	detail := errtrail.PublicMessage(err)
 	if detail == title {

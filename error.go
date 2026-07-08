@@ -34,8 +34,15 @@ func Newf(code Code, format string, args ...any) *Error {
 // so CodeOf delegates to the Code further down the chain. To change the
 // code, use Wrap(...).WithCode(c).
 //
-// Wrap returns nil when err is nil, so callers can skip the if err != nil
-// check.
+// Wrap returns nil when err is nil, which keeps chained builder calls safe
+// (all builder methods are nil-receiver safe). Caution: the return type is
+// *Error, so returning that nil directly from a function declared to return
+// error yields a non-nil error holding a typed nil. Keep the usual guard in
+// such functions:
+//
+//	if err != nil {
+//	    return errtrail.Wrap(err, "load profile")
+//	}
 func Wrap(err error, msg string) *Error {
 	if err == nil {
 		return nil
@@ -43,7 +50,8 @@ func Wrap(err error, msg string) *Error {
 	return &Error{msg: msg, cause: err, pc: caller()}
 }
 
-// Wrapf is the fmt.Sprintf form of Wrap. Returns nil when err is nil.
+// Wrapf is the fmt.Sprintf form of Wrap. Returns nil when err is nil (see
+// Wrap for the typed-nil caveat).
 func Wrapf(err error, format string, args ...any) *Error {
 	if err == nil {
 		return nil

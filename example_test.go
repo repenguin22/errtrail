@@ -36,9 +36,18 @@ func ExampleWrap() {
 }
 
 func ExampleWrap_nil() {
-	// Wrap(nil) returns nil, so callers can skip the if err != nil check.
+	// Wrap(nil) returns a nil *Error, so chained builder calls are safe.
 	var noErr error
 	fmt.Println(errtrail.Wrap(noErr, "layer") == nil)
+
+	// But never return Wrap(err, ...) unconditionally from a function
+	// declared to return error: a nil *Error stored in an error interface
+	// is a non-nil error. Guard with if err != nil instead.
+	broken := func() error {
+		return errtrail.Wrap(noErr, "layer") // wrong when noErr is nil
+	}
+	fmt.Println(broken() == nil)
 	// Output:
 	// true
+	// false
 }
