@@ -4,12 +4,13 @@
 
 A Go error library for web services (HTTP / gRPC). See [DESIGN.md](DESIGN.md) for the full design spec.
 
-- **Error codes are the source of truth** — `Code` values 0–16 match gRPC's `codes.Code`. HTTP / gRPC statuses are derived from a lookup table.
+- **Error codes are the source of truth** — `Code` values 0–16 match gRPC's `codes.Code`. HTTP / gRPC statuses and retryability are all derived from a lookup table.
 - **Stdlib-only core** — the gRPC conversion is isolated in a separate `grpcerr` module.
 - **Lightweight call-site tracking** — `New` / `Wrap` each record one caller frame. No stack traces.
 - **Fully compatible with the standard `errors` package** — works with `Is` / `As` / `Unwrap` / `Join`.
-- **Internal vs. public message separation** — clients only ever see the public message.
-- **`slog.LogValuer` implementation** and **RFC 9457 (Problem Details)** responses.
+- **Internal vs. public separation** — clients only ever see the public message and public fields; internal messages and attrs stay in your logs.
+- **`slog.LogValuer` implementation** and **RFC 9457 (Problem Details)** responses, including extension members.
+- **Same taxonomy end to end** — carry code names across gRPC and rebuild them on the calling side.
 
 ## Install
 
@@ -22,56 +23,96 @@ The core module supports **Go 1.22+**. The `grpcerr` module requires **Go 1.25+*
 
 ## Usage
 
-```go
-// At the source: attach a code, an internal message, a public message, and attributes.
-err := errtrail.New(errtrail.NotFound, "user row missing").
-    WithPublic("User not found").
-    With(slog.String("user_id", id))
+errtrail is built around one small discipline that mirrors the three places an
+error passes through in a request:
 
-// In a middle layer: wrap to add context. The code is inherited from below.
-if err != nil {
-    return errtrail.Wrap(err, "load profile")
+```
+  source  ─────▶  middle layers  ─────▶  boundary
+ classify         add context           log once, respond
+```
+
+Each layer has exactly one job. Get these three right and everything else — the
+HTTP/gRPC status, the client message, structured logs, retry decisions — falls
+out of the `Code` for free. The rest of this section walks each layer in turn;
+[Best practices](#best-practices) distils them into a checklist.
+
+### 1. At the source — classify once
+
+Where the error originates, attach everything you know in one place: a **`Code`**
+(the classification, and the single source of truth for the HTTP/gRPC status), an
+**internal message** for your own eyes, and — only if a client should see them —
+a **public message** and structured **public fields**. `With` adds `slog`
+attributes that stay in the logs.
+
+```go
+if row == nil {
+    return errtrail.New(errtrail.NotFound, "user row missing").
+        WithPublic("User not found").       // safe to show a client
+        With(slog.String("user_id", id))    // logs only, never sent to a client
 }
 ```
 
-At the boundary:
+Errors from the standard library or a third-party package enter the chain the
+moment you `Wrap` them — that is also where you assign their `Code`:
+
+```go
+if err := row.Scan(&u); err != nil {
+    if errors.Is(err, sql.ErrNoRows) {
+        return errtrail.Wrap(err, "user row missing").
+            WithCode(errtrail.NotFound).
+            WithPublic("User not found")
+    }
+    return errtrail.Wrap(err, "scan user").WithCode(errtrail.Internal)
+}
+```
+
+You never write an HTTP status or a gRPC code by hand; both are derived from the
+`Code` via a lookup table.
+
+### 2. In middle layers — add context, don't reclassify
+
+As the error travels up, `Wrap` it to record the path it took. Don't assign a new
+code (the one from the source is inherited) and don't log yet — the trace already
+remembers every layer.
+
+```go
+func (s *Service) Profile(ctx context.Context, id string) (*Profile, error) {
+    u, err := s.repo.Get(ctx, id)
+    if err != nil {
+        return nil, errtrail.Wrap(err, "load profile") // context, not a new code
+    }
+    // ...
+}
+```
+
+> **⚠️ Typed-nil footgun.** `Wrap` returns `*Error`, not `error`. Returning it
+> unconditionally from a function whose signature is `error` produces a non-nil
+> error holding a nil pointer, even on the success path. Keep the `if err != nil`
+> guard (as above) rather than `return errtrail.Wrap(err, "...")` at the end of a
+> function.
+
+### 3. At the boundary — log once, then respond
+
+At the top of the request (an HTTP handler or a gRPC method) do two things, each
+exactly once: log the full internal error, then turn it into a response that
+carries **only** public information.
 
 ```go
 // HTTP handler
-slog.ErrorContext(ctx, "request failed", slog.Any("error", err)) // log everything internal
-_ = problem.Write(w, err)                                        // only the public message reaches the client
+slog.ErrorContext(ctx, "request failed", slog.Any("error", err)) // everything internal
+_ = problem.Write(w, err)                                        // only public data leaves
 
 // gRPC handler
 return nil, grpcerr.ToError(err)
 ```
 
-To also carry the errtrail code name across the wire as a machine-readable
-[`errdetails.ErrorInfo`](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/errdetails#ErrorInfo)
-(useful for custom codes, whose names are otherwise lost), set the service
-domain once at startup:
+The internal message, attrs, and trace never leave your process. The client gets
+the public message (falling back to the generic status text if none was set) and
+the machine-readable code name.
 
-```go
-grpcerr.Domain = "myservice.example.com" // opt-in; empty (default) attaches nothing
-```
-
-On the client side of a gRPC call, convert back into the same taxonomy —
-custom codes are recovered from `ErrorInfo.Reason` when the calling service
-registered the same code:
-
-```go
-res, err := client.GetUser(ctx, req)
-if err != nil {
-    terr := grpcerr.FromError(err)     // wire code -> errtrail.Code; wraps err
-    if errtrail.IsRetryable(terr) {    // same taxonomy end to end
-        // back off and retry
-    }
-    return nil, errtrail.Wrap(terr, "call user service")
-}
-```
-
-Public extension fields (RFC 9457 §3.2) carry structured, client-safe details
-— e.g. field-level validation errors — without leaking internals. Unlike
-`With` attrs (internal, logs only), `WithPublicField` data reaches the client:
+For validation-style errors, attach structured **public fields** at the source
+with `WithPublicField`; they surface as RFC 9457 extension members. `instance`
+comes from the request at the boundary, not from the error:
 
 ```go
 // At the source:
@@ -81,24 +122,43 @@ err := errtrail.New(errtrail.InvalidArgument, "email failed regexp").
         {"detail": "must be a valid email address", "pointer": "#/email"},
     })
 
-// At the boundary — instance comes from the request, not the error:
+// At the boundary:
 _ = problem.Write(w, err, problem.Instance(r.URL.Path))
 // {"code":"INVALID_ARGUMENT","detail":"Validation failed",
 //  "errors":[{"detail":"must be a valid email address","pointer":"#/email"}],
 //  "instance":"/users","status":400,"title":"Bad Request"}
 ```
 
-Retry decisions also derive from the code — `Unavailable`, `DeadlineExceeded`,
-`ResourceExhausted`, and `Aborted` are retryable; custom codes opt in with
-`errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`:
+Over gRPC, set the service domain once at startup so custom code **names** (not
+just their numeric gRPC code) survive the wire as a machine-readable
+[`errdetails.ErrorInfo`](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/errdetails#ErrorInfo):
 
 ```go
-if errtrail.IsRetryable(err) {
-    return retryWithBackoff(ctx, op)
+grpcerr.Domain = "myservice.example.com" // opt-in; empty (default) attaches nothing
+```
+
+### Calling other services
+
+When your service is itself a client, bring the downstream error back into the
+same taxonomy with `FromError`. Wire codes map one-to-one, and a custom code is
+recovered from its `ErrorInfo.Reason` when you have registered the same code
+locally. Retry decisions then derive from the same `Code`:
+
+```go
+res, err := client.GetUser(ctx, req)
+if err != nil {
+    terr := grpcerr.FromError(err)  // wire status -> errtrail.Code; wraps err
+    if errtrail.IsRetryable(terr) { // Unavailable/DeadlineExceeded/ResourceExhausted/Aborted
+        return retryWithBackoff(ctx, op)
+    }
+    return nil, errtrail.Wrap(terr, "call user service")
 }
 ```
 
-Inspect the propagation path with `%+v`:
+### Inspecting the propagation path
+
+`%+v` prints the full chain — message, code, public message and fields, attrs,
+and the recorded trace — for debugging and tests:
 
 ```
 load profile: query user: sql: no rows in result set
@@ -109,6 +169,41 @@ load profile: query user: sql: no rows in result set
     example.com/app/service.(*UserService).Profile (/src/app/service/user.go:88): load profile
     example.com/app/repo.(*UserRepo).Get (/src/app/repo/user.go:42): query user
 ```
+
+## Best practices
+
+A checklist, with the reasoning behind each rule:
+
+- **Attach the `Code` at the source, once.** It is the single source of truth: the
+  HTTP status, the gRPC code, and `IsRetryable` all derive from it. Deriving a
+  status by hand anywhere else is how they drift apart.
+- **`Wrap` to add context; don't reclassify in the middle.** A middle layer that
+  sets a new code hides the real cause. Let the source's code propagate; only
+  override with `WithCode` when you are deliberately translating one failure into
+  another (e.g. a downstream `Unavailable` you choose to surface as `Internal`).
+- **Keep internal and public strictly separate.** `WithPublic` and
+  `WithPublicField` are the *only* things a client ever sees; the internal
+  message and `With` attrs are for logs. When unsure whether a string is safe to
+  expose, leave `WithPublic` unset — the client falls back to the generic status
+  text rather than leaking a detail.
+- **Classify with `CodeOf`; match sentinels with `errors.Is`.** For "what kind of
+  failure is this?" switch on `errtrail.CodeOf(err)` — errtrail deliberately does
+  *not* overload `errors.Is` for codes, because implicit code matching is hard to
+  predict. `errors.Is` / `errors.As` still work for sentinel values (`sql.ErrNoRows`,
+  your own `var Err…`) because `Wrap` preserves the cause.
+- **Log once, at the boundary, with `slog.Any`.** The trace already records every
+  `Wrap` point, so logging at each layer only duplicates it. Passing the `*Error`
+  to `slog.Any("error", err)` expands its code, trace, and attrs via `LogValue`;
+  the public message is intentionally omitted from logs.
+- **Register custom codes at `init`.** The registry is written once at startup and
+  read concurrently afterward — registering later is a data race. Give each custom
+  code a unique `SCREAMING_SNAKE` name; it is the wire and config lookup key.
+- **Use `Newf`/`Wrapf` only for the internal message.** Interpolated request data
+  belongs in `With` attrs (queryable in logs) or `WithPublicField`, not baked into
+  a message string.
+- **Retry on `IsRetryable`, not a hand-maintained list.** Built-ins `Unavailable`,
+  `DeadlineExceeded`, `ResourceExhausted`, and `Aborted` are retryable; custom
+  codes opt in with `errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`.
 
 ## Structured logging
 
@@ -146,15 +241,32 @@ slog.New(slog.NewJSONHandler(os.Stdout, nil)).
 
 ## Custom codes
 
-Register values >= 100 from `init` or before the server starts (registering after startup is not supported).
+Register your own codes (values `>= 100`; 0–99 are reserved) from `init`, or
+otherwise before the server starts — the registry is read concurrently once
+the server is running, so registering later is a data race.
 
 ```go
 const RateLimited errtrail.Code = 100
 
 func init() {
-    errtrail.Register(RateLimited, "RATE_LIMITED", http.StatusTooManyRequests, 8 /* ResourceExhausted */)
+    errtrail.Register(
+        RateLimited,
+        "RATE_LIMITED",                 // unique SCREAMING_SNAKE name; the wire/config lookup key
+        http.StatusTooManyRequests,     // HTTP status (must be in [100, 599])
+        8,                              // gRPC code, ResourceExhausted (must be 0–16)
+        errtrail.Retryable(),           // optional: makes IsRetryable report true
+    )
 }
 ```
+
+Once registered, `RateLimited` behaves like a built-in everywhere: `HTTPStatus`,
+`GRPCCode`, `String`, `Retryable`, `problem.From`, and `grpcerr.ToStatus` all
+resolve it through the same table, and `CodeByName("RATE_LIMITED")` recovers it
+(used by `grpcerr.FromError` to rebuild the code from the wire).
+
+`Register` panics on misuse — a code below 100, a duplicate code or name, an
+empty name, an out-of-range HTTP status, or a gRPC code above 16 — so a
+mistake surfaces at startup rather than mid-request.
 
 ## Benchmarks
 
