@@ -25,6 +25,30 @@ Changelog format), backfill the v0.x releases, and state the v1.0 criteria
 in the README (essentially: the P1 features have all shipped, so what's
 left is closing the open questions in this file).
 
+### 2. gRPC wire-level round-trip test (the one real E2E gap)
+
+The grpcerr round-trip tests hand a status object across in-process
+(`ToError` → `status.FromError`); they never cross a real gRPC transport.
+On the wire, `ErrorInfo` details are proto-serialized into the
+`grpc-status-details-bin` header — so detail marshaling over real transport,
+and the headline "same taxonomy end to end" flow (server error → wire →
+`FromError` recovers the custom code), are currently unverified.
+
+- Add `grpcerr/e2e_test.go`: a real `grpc.Server` + `ClientConn` over
+  `bufconn` (in-memory listener bundled with grpc — zero new dependencies,
+  no network, no flakes). No protoc: register a dummy unary method via a
+  hand-written `grpc.ServiceDesc` with `emptypb`.
+- Handler returns `grpcerr.ToError` of a custom-code error with `Domain`
+  set and a public message; the client `conn.Invoke`s, then asserts
+  `FromError` recovers the custom code, the public message, and
+  `IsRetryable` — across the actual transport.
+- Runs in the existing grpcerr CI leg; ~100–150 lines, no new job.
+
+Deliberately not doing: a real-server HTTP E2E (httptest.NewRecorder already
+verifies everything errtrail touches — the transport layer isn't ours) and
+any Docker/external-service E2E (non-hermetic tests would only make CI
+flaky; problem and otelerr already test against the real recorder/SDK).
+
 ## Explicitly rejected (do not revisit without new evidence)
 
 - **Full stack traces (opt-in or otherwise)** — one frame per wrap is the
