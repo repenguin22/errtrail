@@ -22,34 +22,19 @@ atomics there is different.
 
 ### 1. Cut v1.0
 
-The v1.0 criteria live in the README. Everything is checked off except the gRPC
-wire-level round-trip test (#2 below) — once that lands, tag v1.0 across the
-modules and commit to SemVer compatibility (no breaking change without a major
-bump).
+**All v1.0 criteria in the README are now met** — the last one closed with
+`grpcerr/e2e_test.go`, a bufconn-based wire-level round-trip proving that
+`ErrorInfo` details survive a real gRPC transport. What remains is the release
+mechanics: tag core v1.0.0 first, bump the submodules' core requirement, then
+tag `grpcerr/v1.0.0` and `otelerr/v1.0.0`; add the entries to CHANGELOG.md and
+flip the README's pre-1.0 wording to the SemVer compatibility promise (no
+breaking change without a major bump).
 
-### 2. gRPC wire-level round-trip test (the one real E2E gap)
-
-The grpcerr round-trip tests hand a status object across in-process
-(`ToError` → `status.FromError`); they never cross a real gRPC transport.
-On the wire, `ErrorInfo` details are proto-serialized into the
-`grpc-status-details-bin` header — so detail marshaling over real transport,
-and the headline "same taxonomy end to end" flow (server error → wire →
-`FromError` recovers the custom code), are currently unverified.
-
-- Add `grpcerr/e2e_test.go`: a real `grpc.Server` + `ClientConn` over
-  `bufconn` (in-memory listener bundled with grpc — zero new dependencies,
-  no network, no flakes). No protoc: register a dummy unary method via a
-  hand-written `grpc.ServiceDesc` with `emptypb`.
-- Handler returns `grpcerr.ToError` of a custom-code error with `Domain`
-  set and a public message; the client `conn.Invoke`s, then asserts
-  `FromError` recovers the custom code, the public message, and
-  `IsRetryable` — across the actual transport.
-- Runs in the existing grpcerr CI leg; ~100–150 lines, no new job.
-
-Deliberately not doing: a real-server HTTP E2E (httptest.NewRecorder already
-verifies everything errtrail touches — the transport layer isn't ours) and
-any Docker/external-service E2E (non-hermetic tests would only make CI
-flaky; problem and otelerr already test against the real recorder/SDK).
+Deliberately-not-doing notes kept for the record: a real-server HTTP E2E
+(httptest already verifies everything errtrail touches — the transport layer
+isn't ours) and any Docker/external-service E2E (non-hermetic tests would only
+make CI flaky; problem and otelerr already test against the real
+recorder/SDK).
 
 ## Explicitly rejected (do not revisit without new evidence)
 
