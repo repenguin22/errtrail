@@ -29,21 +29,26 @@ jobs:
       - name: bench smoke
         run: go test -run=XXX -bench=. -benchtime=1x ./...
 
-  grpcerr:
-    name: grpcerr (go stable)
+  submodules:
+    name: ${{ matrix.module }} (go stable)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Submodules with their own go.mod, tested against the local core.
+        module: ['grpcerr', 'otelerr']
     defaults:
       run:
-        working-directory: grpcerr
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: stable
       - name: use the local core module
-        # grpcerr's go.mod pins the released errtrail; point it at the
-        # working tree so a core change that breaks grpcerr fails here,
-        # not after the next tag.
+        # The submodule's go.mod pins the released errtrail; point it at the
+        # working tree so a core change that breaks it fails here, not after
+        # the next tag.
         run: |
           go mod edit -replace github.com/repenguin22/errtrail=..
           go mod tidy
@@ -58,9 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Two separate go.mod modules, each linted from its own root. Both
-        # share the .golangci.yml at the repository root.
-        module: ['.', 'grpcerr']
+        # Separate go.mod modules, each linted from its own root. All share
+        # the .golangci.yml at the repository root.
+        module: ['.', 'grpcerr', 'otelerr']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -72,10 +77,10 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: use the local core module (grpcerr)
-        # Same replace as the grpcerr test job: lint HEAD against HEAD.
-        if: matrix.module == 'grpcerr'
-        working-directory: grpcerr
+      - name: use the local core module
+        # Same replace as the submodule test job: lint HEAD against HEAD.
+        if: matrix.module != '.'
+        working-directory: ${{ matrix.module }}
         run: |
           go mod edit -replace github.com/repenguin22/errtrail=..
           go mod tidy
@@ -89,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ['.', 'grpcerr']
+        module: ['.', 'grpcerr', 'otelerr']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -101,11 +106,11 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: use the local core module (grpcerr)
+      - name: use the local core module
         # govulncheck builds the packages, so it needs the same replace as
         # the test and lint jobs to analyze HEAD against HEAD.
-        if: matrix.module == 'grpcerr'
-        working-directory: grpcerr
+        if: matrix.module != '.'
+        working-directory: ${{ matrix.module }}
         run: |
           go mod edit -replace github.com/repenguin22/errtrail=..
           go mod tidy

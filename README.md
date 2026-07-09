@@ -17,9 +17,10 @@ A Go error library for web services (HTTP / gRPC). See [DESIGN.md](DESIGN.md) fo
 ```
 go get github.com/repenguin22/errtrail
 go get github.com/repenguin22/errtrail/grpcerr   # only if you use gRPC
+go get github.com/repenguin22/errtrail/otelerr   # only if you use OpenTelemetry
 ```
 
-The core module supports **Go 1.22+**. The `grpcerr` module requires **Go 1.25+**, following the minimum of `google.golang.org/grpc`.
+The core module supports **Go 1.22+**. The `grpcerr` and `otelerr` modules require **Go 1.25+**, following the minimums of `google.golang.org/grpc` and `go.opentelemetry.io/otel`.
 
 ## Usage
 
@@ -111,6 +112,21 @@ the public message and the machine-readable code name; when no public message
 was set, HTTP clients see the generic status text as the problem title, and
 gRPC clients get the code name (e.g. `"UNAVAILABLE"`) as the status message —
 never HTTP wording, never an empty message.
+
+If you use OpenTelemetry, mark the active span in the same breath — the
+`otelerr` module records the error (code name + attrs, never the public
+message) and sets the span status from the `Code`, following the OTel
+server-span conventions: only server-fault codes (`Internal`, `Unavailable`,
+`DeadlineExceeded`, …) mark the span as an error, so `NotFound`-heavy traffic
+doesn't light your trace UI up:
+
+```go
+otelerr.Record(ctx, err) // exception event + span status derived from the Code
+
+// And to join logs with traces, attach the IDs at the source:
+err := errtrail.New(errtrail.Internal, "db write failed").
+    With(otelerr.TraceAttrs(ctx)...)
+```
 
 For validation-style errors, attach structured **public fields** at the source
 with `WithPublicField`; they surface as RFC 9457 extension members. `instance`
@@ -287,6 +303,7 @@ slog.New(slog.NewJSONHandler(os.Stdout, nil)).
 | `errtrail` | standard library only | Core. `Code`, `Error`, inspection, formatting, slog |
 | `errtrail/problem` | standard library only | RFC 9457 response generation |
 | `errtrail/grpcerr` | `google.golang.org/grpc` | `*status.Status` conversion (separate go.mod) |
+| `errtrail/otelerr` | `go.opentelemetry.io/otel` | span recording / status from `Code` (separate go.mod) |
 
 ## Custom codes
 

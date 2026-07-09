@@ -18,6 +18,15 @@ updates:
       go-modules:
         patterns: ["*"]
 
+  # otelerr module — the OpenTelemetry API/SDK surface.
+  - package-ecosystem: gomod
+    directory: /otelerr
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
   # Keep the GitHub Actions used in CI up to date.
   - package-ecosystem: github-actions
     directory: /

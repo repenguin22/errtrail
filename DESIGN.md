@@ -43,12 +43,15 @@ errtrail/
 ├── slog.go                // slog.LogValuer implementation
 ├── problem/
 │   └── problem.go         // RFC 9457 (deps: stdlib only)
-└── grpcerr/
-    ├── go.mod             // module github.com/repenguin22/errtrail/grpcerr (deps: google.golang.org/grpc)
-    └── grpcerr.go
+├── grpcerr/
+│   ├── go.mod             // module github.com/repenguin22/errtrail/grpcerr (deps: google.golang.org/grpc)
+│   └── grpcerr.go
+└── otelerr/
+    ├── go.mod             // module github.com/repenguin22/errtrail/otelerr (deps: go.opentelemetry.io/otel)
+    └── otelerr.go
 ```
 
-`problem` can be written using only the standard library, so it lives in the core module. Only `grpcerr` is a separate module.
+`problem` can be written using only the standard library, so it lives in the core module. `grpcerr` and `otelerr` carry heavy third-party dependencies, so each is a separate module — users who don't need them never pull those dependencies in.
 
 ---
 
@@ -536,7 +539,35 @@ No interceptor is provided in v1 (it would end up tightly coupled to each servic
 
 ---
 
-## 10. Edge case specification (summary)
+## 10. The otelerr package (separate module)
+
+`github.com/repenguin22/errtrail/otelerr`. Has its own go.mod and depends on `go.opentelemetry.io/otel` (+ `otel/trace`; the SDK is test-only). Named `otelerr` — not `otel` — so the package name doesn't clash with `go.opentelemetry.io/otel`, mirroring the `grpcerr` naming. Follows the same release convention: tag the core first, then `otelerr/vX.Y.Z`.
+
+```go
+// Record records err on the span in ctx: an exception event carrying the
+// errtrail code name ("errtrail.code") and the With attrs, plus — for
+// server-fault codes only — a span status of Error with err.Error() as the
+// description. No-op when err is nil or ctx carries no recording span.
+func Record(ctx context.Context, err error)
+
+// RecordSpan is Record for a span you already hold.
+func RecordSpan(span trace.Span, err error)
+
+// TraceAttrs returns slog attrs (trace_id, span_id) for the span in ctx,
+// for attaching to an error via With so logs can be joined with traces.
+// Returns nil when ctx has no valid span context.
+func TraceAttrs(ctx context.Context) []slog.Attr
+```
+
+Design decisions:
+
+- **Spans are an internal channel, like logs — not the public channel.** Span attributes are exported only to your own tracing backend and never propagate on the wire (only the trace-context IDs do), so their exposure equals the log pipeline's. Record therefore carries the internal message chain (`err.Error()`), the code name, and the attrs, and — exactly like `LogValue` — leaves the public message out.
+- **Span status follows the OTel gRPC semantic conventions for server spans**: only server-fault codes set `Error` — UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS. Client-fault codes (NOT_FOUND, INVALID_ARGUMENT, ...) leave the status unset so lookup misses don't read as an error storm in the trace UI; the exception event is recorded either way. Custom codes map through their registered `GRPCCode()`, keeping the registry the single source of truth. A plain (non-errtrail) error resolves to UNKNOWN and is conservatively a server fault.
+- The slog attr conversion maps String/Int64/Float64/Bool to native attribute types and degrades everything else (Duration, Time, Group, Any) to the slog string form; LogValuer values are resolved first.
+
+---
+
+## 11. Edge case specification (summary)
 
 | Case | Behavior |
 |---|---|
@@ -555,7 +586,7 @@ No interceptor is provided in v1 (it would end up tightly coupled to each servic
 
 ---
 
-## 11. Test plan
+## 12. Test plan
 
 - **code_test.go**: table test covering all 17 built-in codes' mapping (HTTP/gRPC/String). Register's success and panic paths.
 - **error_test.go**: immutability of New/Wrap/builders (the original Error is never mutated, attrs slices are never shared). Every nil-safety case. `errors.Is/As/Unwrap` compatibility (including mixed chains with the standard `%w`).
@@ -566,7 +597,7 @@ No interceptor is provided in v1 (it would end up tightly coupled to each servic
 - **grpcerr/grpcerr_test.go**: status conversion. gRPC mapping for a custom code.
 - **Benchmarks** (bench_test.go): `New`, `Wrap`, building a 3-deep `Wrap` chain, `%+v` formatting. `New` targets roughly 1 alloc; `-benchmem` results are recorded in the README for regression detection.
 
-## 12. Implementation order
+## 13. Implementation order
 
 1. `code.go` (+ tests) — standalone, no dependencies
 2. `frame.go` → `error.go` (+ tests)
