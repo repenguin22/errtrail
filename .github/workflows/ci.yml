@@ -117,3 +117,42 @@ jobs:
       - name: govulncheck
         working-directory: ${{ matrix.module }}
         run: govulncheck ./...
+
+  coverage:
+    name: coverage (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ['.', 'grpcerr', 'otelerr']
+    env:
+      # Floor, not a target. All modules sit ~96-97%; this catches a real
+      # regression without nagging on normal fluctuation. Raise deliberately.
+      MIN_COVERAGE: '90.0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: use the local core module
+        # Measure the submodule against the working-tree core, like the other
+        # submodule jobs.
+        if: matrix.module != '.'
+        working-directory: ${{ matrix.module }}
+        run: |
+          go mod edit -replace github.com/repenguin22/errtrail=..
+          go mod tidy
+      - name: coverage
+        working-directory: ${{ matrix.module }}
+        run: |
+          name='${{ matrix.module }}'
+          [ "$name" = '.' ] && name='core'
+          go test -covermode=atomic -coverprofile=cover.out ./...
+          pct=$(go tool cover -func=cover.out | awk '/^total:/{gsub(/%/,"",$NF); print $NF}')
+          {
+            echo "### Coverage — \`$name\`"
+            echo ""
+            echo "**${pct}%** of statements (minimum ${MIN_COVERAGE}%)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          awk -v p="$pct" -v min="$MIN_COVERAGE" 'BEGIN { exit (p+0 < min+0) ? 1 : 0 }' \
+            || { echo "::error::$name coverage ${pct}% is below the ${MIN_COVERAGE}% minimum"; exit 1; }

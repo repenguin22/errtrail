@@ -11,8 +11,10 @@ hardening and ecosystem work.
 
 ## Hardening and ecosystem
 
-Note: the code registry became thread-safe (copy-on-write) in core v0.5.0.
-`problem.TypeURL` and `grpcerr.Domain` deliberately stay on the documented
+Shipped so far: the code registry became thread-safe (copy-on-write) in core
+v0.5.0, and CI now measures per-module coverage, writes it to the job summary,
+and gates on a 90% floor (self-contained — no external service or badge). Note
+that `problem.TypeURL` and `grpcerr.Domain` deliberately stay on the documented
 "set before startup" contract — they are plain package variables with no
 partial-write hazard, so the cost/benefit of atomics there is different.
 
@@ -22,12 +24,6 @@ Adopters need a signal that the API is stable. Add `CHANGELOG.md` (Keep a
 Changelog format), backfill the v0.x releases, and state the v1.0 criteria
 in the README (essentially: the P1 features have all shipped, so what's
 left is closing the open questions in this file).
-
-### 2. Coverage reporting in CI
-
-Coverage is already high (core 96.7% / problem 89.5% / grpcerr 100%); make it
-visible. Upload `go test -coverprofile` results in CI and add a badge next to
-the existing CI badge in the README.
 
 ## Explicitly rejected (do not revisit without new evidence)
 
