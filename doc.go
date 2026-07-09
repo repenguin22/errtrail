@@ -48,7 +48,8 @@
 //   - Keep internal and public strictly separate. WithPublic and
 //     WithPublicField are the only things a client sees; the internal
 //     message and With attrs are for logs. When unsure, leave WithPublic
-//     unset so PublicMessage falls back to the generic status text.
+//     unset — clients get the generic status text (HTTP) or the code name
+//     (gRPC) instead of a leaked detail.
 //   - Classify with CodeOf; errtrail does not overload errors.Is for codes.
 //     errors.Is/As still work for sentinel values, since Wrap keeps the cause.
 //   - Log once, at the boundary, via slog.Any — LogValue expands code, trace,

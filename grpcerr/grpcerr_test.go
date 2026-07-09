@@ -44,14 +44,36 @@ func TestToStatusCode(t *testing.T) {
 }
 
 func TestToStatusFallbackMessage(t *testing.T) {
-	// public not set -> PublicMessage falls back to http.StatusText.
+	// public not set -> the message falls back to the code name, never to
+	// the internal message and never to HTTP wording.
 	err := errtrail.New(errtrail.Internal, "secret")
 	st := ToStatus(err)
 	if st.Code() != codes.Internal {
 		t.Errorf("Code = %v", st.Code())
 	}
-	if st.Message() == "secret" {
-		t.Error("leaked internal message")
+	if st.Message() != "INTERNAL" {
+		t.Errorf("Message = %q, want INTERNAL (code-name fallback)", st.Message())
+	}
+}
+
+func TestToStatusFallbackNeverEmpty(t *testing.T) {
+	// Canceled maps to HTTP 499, which http.StatusText doesn't know — the
+	// old PublicMessage-based fallback produced an empty message here.
+	if got := ToStatus(errtrail.New(errtrail.Canceled, "ctx canceled")).Message(); got != "CANCELED" {
+		t.Errorf("Message = %q, want CANCELED", got)
+	}
+
+	// Custom codes get their name even without Domain/ErrorInfo.
+	registerRateLimited()
+	if got := ToStatus(errtrail.New(rateLimited, "slow down")).Message(); got != "RATE_LIMITED" {
+		t.Errorf("Message = %q, want RATE_LIMITED", got)
+	}
+}
+
+func TestToStatusExplicitPublicUnchanged(t *testing.T) {
+	err := errtrail.New(errtrail.Internal, "secret").WithPublic("Something went wrong")
+	if got := ToStatus(err).Message(); got != "Something went wrong" {
+		t.Errorf("Message = %q, want the explicit public message", got)
 	}
 }
 

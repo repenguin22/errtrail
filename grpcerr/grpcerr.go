@@ -22,7 +22,12 @@ var Domain string
 // ToStatus converts err to a *status.Status.
 //
 //	Code    = codes.Code(errtrail.CodeOf(err).GRPCCode())
-//	Message = errtrail.PublicMessage(err)
+//	Message = the explicitly-set public message (errtrail.LookupPublicMessage),
+//	          or the code name (e.g. "UNAVAILABLE", "RATE_LIMITED") when none is set
+//
+// The code-name fallback keeps HTTP wording ("Internal Server Error") off the
+// gRPC wire and guarantees a non-empty message even for codes whose HTTP
+// status has no standard text (Canceled's 499, custom codes).
 //
 // When Domain is non-empty, an errdetails.ErrorInfo{Reason: code.String(),
 // Domain: Domain} is attached, so clients receive the errtrail code name
@@ -41,7 +46,11 @@ func ToStatus(err error) *status.Status {
 		return status.New(codes.OK, "")
 	}
 	code := errtrail.CodeOf(err)
-	st := status.New(codes.Code(code.GRPCCode()), errtrail.PublicMessage(err))
+	msg, ok := errtrail.LookupPublicMessage(err)
+	if !ok {
+		msg = code.String()
+	}
+	st := status.New(codes.Code(code.GRPCCode()), msg)
 	if Domain == "" {
 		return st
 	}

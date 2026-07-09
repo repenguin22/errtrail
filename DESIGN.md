@@ -482,7 +482,10 @@ var Domain string
 
 // ToStatus converts err to a *status.Status.
 //   code    = codes.Code(errtrail.CodeOf(err).GRPCCode())
-//   message = errtrail.PublicMessage(err)
+//   message = the explicitly-set public message (errtrail.LookupPublicMessage),
+//             or the code name (e.g. "UNAVAILABLE", "RATE_LIMITED") when none
+//             is set — keeps HTTP wording off the gRPC wire and the message
+//             non-empty for codes whose HTTP status has no standard text
 // When Domain is non-empty, attaches
 // errdetails.ErrorInfo{Reason: code.String(), Domain: Domain} so the
 // errtrail code name (e.g. a custom "RATE_LIMITED") survives the wire even
@@ -543,7 +546,8 @@ No interceptor is provided in v1 (it would end up tightly coupled to each servic
 | `CodeOf(fmt.Errorf("x"))` (no `*Error` present) | `Unknown` |
 | A chain built entirely with `Wrap` and no code set anywhere | Delegates to the innermost `*Error`'s code; `Unknown` if none has one |
 | `PublicMessage` when public is unset | Falls back to `http.StatusText(HTTPStatus)`. Never falls back to the internal msg |
-| `PublicMessage` on a code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | Returns `""` (so the gRPC message and the problem Detail/Title are empty too). Set `WithPublic` on these codes if a client message is needed |
+| `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
+| Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage` returns `""`; the gRPC message falls back to the code name instead (`"CANCELED"`), and the problem Title falls back to the code name too |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |

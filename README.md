@@ -107,8 +107,10 @@ return nil, grpcerr.ToError(err)
 ```
 
 The internal message, attrs, and trace never leave your process. The client gets
-the public message (falling back to the generic status text if none was set) and
-the machine-readable code name.
+the public message and the machine-readable code name; when no public message
+was set, HTTP clients see the generic status text as the problem title, and
+gRPC clients get the code name (e.g. `"UNAVAILABLE"`) as the status message —
+never HTTP wording, never an empty message.
 
 For validation-style errors, attach structured **public fields** at the source
 with `WithPublicField`; they surface as RFC 9457 extension members. `instance`
@@ -229,8 +231,8 @@ A checklist, with the reasoning behind each rule:
 - **Keep internal and public strictly separate.** `WithPublic` and
   `WithPublicField` are the *only* things a client ever sees; the internal
   message and `With` attrs are for logs. When unsure whether a string is safe to
-  expose, leave `WithPublic` unset — the client falls back to the generic status
-  text rather than leaking a detail.
+  expose, leave `WithPublic` unset — the client gets the generic status text
+  (HTTP) or the code name (gRPC) rather than a leaked detail.
 - **Classify with `CodeOf`; match sentinels with `errors.Is`.** For "what kind of
   failure is this?" switch on `errtrail.CodeOf(err)` — errtrail deliberately does
   *not* overload `errors.Is` for codes, because implicit code matching is hard to
