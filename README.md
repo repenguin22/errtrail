@@ -240,9 +240,11 @@ A checklist, with the reasoning behind each rule:
   `Wrap` point, so logging at each layer only duplicates it. Passing the `*Error`
   to `slog.Any("error", err)` expands its code, trace, and attrs via `LogValue`;
   the public message is intentionally omitted from logs.
-- **Register custom codes at `init`.** The registry is written once at startup and
-  read concurrently afterward — registering later is a data race. Give each custom
-  code a unique `SCREAMING_SNAKE` name; it is the wire and config lookup key.
+- **Register custom codes at `init`.** Registration is safe at any time — the
+  registry is swapped atomically (copy-on-write) — but registering at `init`
+  keeps the taxonomy identical for every request the process ever serves. Give
+  each custom code a unique `SCREAMING_SNAKE` name; it is the wire and config
+  lookup key.
 - **Use `Newf`/`Wrapf` only for the internal message.** Interpolated request data
   belongs in `With` attrs (queryable in logs) or `WithPublicField`, not baked into
   a message string.
@@ -286,9 +288,11 @@ slog.New(slog.NewJSONHandler(os.Stdout, nil)).
 
 ## Custom codes
 
-Register your own codes (values `>= 100`; 0–99 are reserved) from `init`, or
-otherwise before the server starts — the registry is read concurrently once
-the server is running, so registering later is a data race.
+Register your own codes (values `>= 100`; 0–99 are reserved), preferably from
+`init`. Registration is thread-safe — the registry is replaced atomically
+(copy-on-write), so lookups never observe a partial write even if you register
+late — but `init` is still the recommended pattern so that every request sees
+the same taxonomy.
 
 > **HTTP-first services often need custom codes.** The 17 built-in codes are
 > gRPC's, and `HTTPStatus` maps each one to a single fixed status — so they're

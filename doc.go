@@ -53,8 +53,9 @@
 //     errors.Is/As still work for sentinel values, since Wrap keeps the cause.
 //   - Log once, at the boundary, via slog.Any — LogValue expands code, trace,
 //     and attrs, and deliberately omits the public message.
-//   - Register custom codes from init (the registry is read concurrently
-//     after startup); give each a unique SCREAMING_SNAKE name.
+//   - Register custom codes from init. Registration is safe at any time
+//     (the registry swaps atomically), but init keeps the taxonomy identical
+//     for every request. Give each code a unique SCREAMING_SNAKE name.
 //   - Wrap returns *Error, not error: don't return it unconditionally from a
 //     function typed to return error, or a nil result becomes a non-nil error.
 //

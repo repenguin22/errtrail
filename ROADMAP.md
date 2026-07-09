@@ -36,14 +36,12 @@ biggest ecosystem gap for real services.
 
 ## Hardening and ecosystem
 
-### 1. Thread-safe or frozen code registry
+Note: the code registry became thread-safe (copy-on-write) in core v0.5.0.
+`problem.TypeURL` and `grpcerr.Domain` deliberately stay on the documented
+"set before startup" contract — they are plain package variables with no
+partial-write hazard, so the cost/benefit of atomics there is different.
 
-`Register` currently relies on a documented contract ("call before the server
-starts"). Enforce it instead: copy-on-write via `atomic.Pointer[map]`, or
-freeze the table on first read and panic on late registration. Removes a
-whole class of subtle production races.
-
-### 2. Revisit the PublicMessage fallback for gRPC messages
+### 1. Revisit the PublicMessage fallback for gRPC messages
 
 `grpcerr.ToStatus` inherits `PublicMessage`'s `http.StatusText` fallback, so
 gRPC clients see HTTP wording ("Internal Server Error") and an empty message
@@ -51,14 +49,14 @@ for `Canceled` / custom codes. Consider falling back to the code name on the
 gRPC path instead. Behavior change on the wire — needs a minor version bump
 and a changelog entry.
 
-### 3. CHANGELOG and a v1.0 plan
+### 2. CHANGELOG and a v1.0 plan
 
 Adopters need a signal that the API is stable. Add `CHANGELOG.md` (Keep a
 Changelog format), backfill the v0.x releases, and state the v1.0 criteria
 in the README (essentially: the P1 features have all shipped, so what's
 left is closing the open questions in this file).
 
-### 4. Coverage reporting in CI
+### 3. Coverage reporting in CI
 
 Coverage is already high (core 96.7% / problem 89.5% / grpcerr 100%); make it
 visible. Upload `go test -coverprofile` results in CI and add a badge next to

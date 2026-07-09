@@ -3,6 +3,8 @@ package errtrail
 import (
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
 )
 
 // Code classifies an error. Values 0–16 share the same meaning and numeric
@@ -35,15 +37,44 @@ const (
 // built-ins.
 const customCodeMin Code = 100
 
-// codeNames is the name -> Code reverse index, seeded from codes at init
-// and kept in sync by Register (which rejects duplicate names). Same
-// concurrency contract as codes: writes only before the server starts.
-var codeNames = map[string]Code{}
+// registry is an immutable snapshot of the code tables: the Code metadata
+// and the name -> Code reverse index for CodeByName. Readers load the
+// current snapshot through registryPtr; Register replaces the whole
+// snapshot (copy-on-write), so a lookup never observes a partial write.
+// Never mutate a snapshot that has been stored.
+type registry struct {
+	codes map[Code]codeInfo
+	names map[string]Code
+}
+
+// clone returns a mutable deep copy for a writer to modify and then Store.
+func (r *registry) clone() *registry {
+	next := &registry{
+		codes: make(map[Code]codeInfo, len(r.codes)+1),
+		names: make(map[string]Code, len(r.names)+1),
+	}
+	for c, info := range r.codes {
+		next.codes[c] = info
+	}
+	for n, c := range r.names {
+		next.names[n] = c
+	}
+	return next
+}
+
+var registryPtr atomic.Pointer[registry]
+
+// registerMu serializes writers only (Register and the test helpers); two
+// concurrent clone-and-swaps would silently drop the loser's entry.
+// Readers never take it — they do one atomic pointer load.
+var registerMu sync.Mutex
 
 func init() {
-	for c, info := range codes {
-		codeNames[info.name] = c
+	reg := &registry{codes: builtins, names: make(map[string]Code, len(builtins))}
+	for c, info := range builtins {
+		reg.names[info.name] = c
 	}
+	registryPtr.Store(reg)
 }
 
 // CodeByName returns the Code registered under name — built-ins included,
@@ -51,7 +82,7 @@ func init() {
 // parsing code names from configuration or from a wire format (see
 // grpcerr's ErrorInfo.Reason recovery).
 func CodeByName(name string) (Code, bool) {
-	c, ok := codeNames[name]
+	c, ok := registryPtr.Load().names[name]
 	return c, ok
 }
 
@@ -63,18 +94,15 @@ type codeInfo struct {
 	retryable  bool
 }
 
-// codes maps Code to codeInfo.
+// builtins seeds the first registry snapshot at init. It is never read
+// after that — every lookup goes through registryPtr — and must not be
+// mutated, since the initial snapshot references it directly.
 //
-// This table is only ever populated at init (for built-ins) and appended to
-// by Register before the server starts; it has no protection against
-// concurrent writes. Reads (String/HTTPStatus/GRPCCode) happen from many
-// goroutines after startup, which is safe as long as all writes finished
-// before that point.
 // Retryable built-ins: DeadlineExceeded (may succeed under a fresh
 // deadline), ResourceExhausted (after backoff), Aborted (transaction-style
 // retry), Unavailable (the canonical transient failure). Canceled is not —
 // the caller gave up deliberately — and Unknown is conservatively not.
-var codes = map[Code]codeInfo{
+var builtins = map[Code]codeInfo{
 	OK:                 {"OK", http.StatusOK, 0, false},
 	Canceled:           {"CANCELED", 499, 1, false},
 	Unknown:            {"UNKNOWN", http.StatusInternalServerError, 2, false},
@@ -104,9 +132,12 @@ func Retryable() RegisterOption {
 	return func(info *codeInfo) { info.retryable = true }
 }
 
-// Register adds a custom code. Call it from an init function, or otherwise
-// before the server starts — calling it afterward races with other
-// goroutines reading Code.
+// Register adds a custom code. It is safe to call at any time, including
+// concurrently with lookups — the registry is replaced atomically
+// (copy-on-write), so readers never observe a partial write. Registering
+// from an init function is still the recommended pattern: every request
+// then sees the same taxonomy, and CodeByName / gRPC Reason recovery on
+// other services assume a stable registry.
 //
 // Panics if c is below customCodeMin (100), if c or name is already
 // registered (names are the reverse-lookup key for CodeByName, so they must
@@ -128,24 +159,30 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 	if grpcCode > 16 {
 		panic("errtrail: grpcCode must be a gRPC code (0-16), got " + strconv.FormatUint(uint64(grpcCode), 10))
 	}
-	if _, ok := codes[c]; ok {
+
+	registerMu.Lock()
+	defer registerMu.Unlock()
+	reg := registryPtr.Load()
+	if _, ok := reg.codes[c]; ok {
 		panic("errtrail: code already registered: " + strconv.FormatUint(uint64(c), 10))
 	}
-	if _, ok := codeNames[name]; ok {
+	if _, ok := reg.names[name]; ok {
 		panic("errtrail: code name already registered: " + name)
 	}
 	info := codeInfo{name: name, httpStatus: httpStatus, grpcCode: grpcCode}
 	for _, o := range opts {
 		o(&info)
 	}
-	codes[c] = info
-	codeNames[name] = c
+	next := reg.clone()
+	next.codes[c] = info
+	next.names[name] = c
+	registryPtr.Store(next)
 }
 
 // String returns the code's name, e.g. "NOT_FOUND" for built-ins or
 // "CODE(123)" for an unregistered custom code.
 func (c Code) String() string {
-	if info, ok := codes[c]; ok {
+	if info, ok := registryPtr.Load().codes[c]; ok {
 		return info.name
 	}
 	return "CODE(" + strconv.FormatUint(uint64(c), 10) + ")"
@@ -154,7 +191,7 @@ func (c Code) String() string {
 // HTTPStatus returns the corresponding HTTP status code. Unregistered codes
 // return 500.
 func (c Code) HTTPStatus() int {
-	if info, ok := codes[c]; ok {
+	if info, ok := registryPtr.Load().codes[c]; ok {
 		return info.httpStatus
 	}
 	return http.StatusInternalServerError
@@ -165,7 +202,7 @@ func (c Code) HTTPStatus() int {
 // unregistered codes return 2 (UNKNOWN). Returned as uint32 so this package
 // need not depend on the grpc package.
 func (c Code) GRPCCode() uint32 {
-	if info, ok := codes[c]; ok {
+	if info, ok := registryPtr.Load().codes[c]; ok {
 		return info.grpcCode
 	}
 	return 2 // UNKNOWN
@@ -176,7 +213,7 @@ func (c Code) GRPCCode() uint32 {
 // return true; everything else returns false. Custom codes return true only
 // if registered with the Retryable option. Unregistered codes return false.
 func (c Code) Retryable() bool {
-	if info, ok := codes[c]; ok {
+	if info, ok := registryPtr.Load().codes[c]; ok {
 		return info.retryable
 	}
 	return false

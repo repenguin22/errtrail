@@ -2,6 +2,7 @@ package errtrail
 
 import (
 	"net/http"
+	"sync"
 	"testing"
 )
 
@@ -106,6 +107,58 @@ func TestRegisterPanicsOnDuplicateName(t *testing.T) {
 	Register(Code(106), "DUP_NAME", 503, 14) // different code, same name
 }
 
+// TestRegisterConcurrentWithReaders is the regression test for the
+// copy-on-write registry: readers loop over every lookup while codes are
+// registered and unregistered. Under -race this fails deterministically
+// against a plain-map implementation.
+func TestRegisterConcurrentWithReaders(t *testing.T) {
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = Unavailable.String()
+				_ = Code(120).HTTPStatus()
+				_, _ = CodeByName("CONCURRENT_CODE")
+				_ = IsRetryable(New(Code(120), "x"))
+			}
+		}()
+	}
+
+	const churn Code = 120
+	for range 200 {
+		Register(churn, "CONCURRENT_CODE", 503, 14, Retryable())
+		unregister(churn, "CONCURRENT_CODE")
+	}
+	close(stop)
+	wg.Wait()
+}
+
+func TestRegisterAfterReadsIsVisible(t *testing.T) {
+	const late Code = 121
+	// Force reads before registering.
+	if got := late.String(); got != "CODE(121)" {
+		t.Fatalf("pre-register String() = %q", got)
+	}
+
+	Register(late, "LATE_CODE", 503, 14)
+	t.Cleanup(func() { unregister(late, "LATE_CODE") })
+
+	if got := late.String(); got != "LATE_CODE" {
+		t.Errorf("post-register String() = %q, want LATE_CODE", got)
+	}
+	if c, ok := CodeByName("LATE_CODE"); !ok || c != late {
+		t.Errorf("CodeByName(LATE_CODE) = %v, %v", c, ok)
+	}
+}
+
 func TestCodeByName(t *testing.T) {
 	if c, ok := CodeByName("NOT_FOUND"); !ok || c != NotFound {
 		t.Errorf("CodeByName(NOT_FOUND) = %v, %v", c, ok)
@@ -132,10 +185,15 @@ func TestRegisterPanicsBelowMin(t *testing.T) {
 	Register(Code(50), "BAD", 500, 2)
 }
 
-// unregister removes a code from both registry maps — test cleanup only.
+// unregister removes a code from the registry — test cleanup only. Like
+// Register, it clones the current snapshot and swaps it in atomically.
 func unregister(c Code, name string) {
-	delete(codes, c)
-	delete(codeNames, name)
+	registerMu.Lock()
+	defer registerMu.Unlock()
+	next := registryPtr.Load().clone()
+	delete(next.codes, c)
+	delete(next.names, name)
+	registryPtr.Store(next)
 }
 
 func TestRegisterPanicsOnDuplicate(t *testing.T) {

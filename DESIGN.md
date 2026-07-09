@@ -145,10 +145,10 @@ type RegisterOption func(*codeInfo)
 // (IsRetryable / (Code).Retryable report true). Not retryable by default.
 func Retryable() RegisterOption
 
-// Register adds a custom code. Intended to be called at init time (before
-// the service starts); registration itself is not made concurrency-safe
-// (a plain write to an internal map — reads are specified to only happen
-// after startup).
+// Register adds a custom code. Safe to call at any time, including
+// concurrently with lookups — the registry snapshot is replaced atomically
+// (copy-on-write). Registering from init is still the recommended pattern
+// so every request sees the same taxonomy.
 // Panics if c < 100, if the code or the name is already registered (names
 // are the CodeByName reverse-lookup key, so they must be unique), if name
 // is empty, if httpStatus is outside [100, 599], or if grpcCode is above 16.
@@ -156,8 +156,7 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 ```
 
 - 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
-- Implemented as a package-level `map[Code]codeInfo` (`codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}`) plus a `map[string]Code` reverse index for CodeByName, seeded from the same table at init and kept in sync by Register. The 17 built-ins are seeded into the same maps, so lookups go through a single path.
-- The doc comment states explicitly: "call `Register` from `init` or before the server starts. Calling it afterward is a data race."
+- Implemented as an immutable `registry` snapshot (`codes map[Code]codeInfo` — `codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}` — plus a `names map[string]Code` reverse index for CodeByName) behind an `atomic.Pointer[registry]`. Readers do one atomic load and a map lookup; `Register` takes a writer-only mutex, clones the snapshot, adds the entry to both maps, and swaps the pointer. A lookup therefore never observes a partial write, and late registration is safe rather than undefined behavior. The 17 built-ins seed the first snapshot at init, so lookups go through a single path.
 - Options keep the signature open for future per-code metadata (e.g. a log-level hint) without another signature change.
 
 ---
