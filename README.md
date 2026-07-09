@@ -357,16 +357,30 @@ BenchmarkWrapChain3-10   2671467    441.1 ns/op   288 B/op   3 allocs/op
 BenchmarkFormatPlusV-10   869619   1329   ns/op  3345 B/op  24 allocs/op
 ```
 
-## Release process
+## Versioning and stability
 
-The core and `grpcerr` are separate modules, so tag them independently.
+The three modules are **versioned independently** under [Semantic Versioning](https://semver.org/), each with its own tag line:
 
 ```
 git tag v0.1.0            # core
 git tag grpcerr/v0.1.0    # grpcerr submodule
+git tag otelerr/v0.1.0    # otelerr submodule
 ```
 
-`grpcerr`'s `require` points at a tagged core version (no replace). When developing both modules together, put a `go.work` outside the repo that uses both modules to get local references.
+A submodule's `require` points at a tagged core version (no `replace`); when developing several modules together, put a `go.work` outside the repo. See [CHANGELOG.md](CHANGELOG.md) for the full history.
+
+**Everything is pre-1.0 today.** While on `v0.x`, a minor bump may add API and, rarely, change wire or response behavior (always called out in the changelog); a patch is fixes only. Pin the versions you depend on.
+
+### Toward v1.0
+
+The feature surface is settled; v1.0 is a promise to keep it stable (no breaking change without a major bump). Remaining criteria:
+
+- [x] P1 feature set complete (public fields, retryability, gRPC round-trip, OTel)
+- [x] Registry is thread-safe; CI gates per-module coverage
+- [x] The `problem.TypeURL` / `grpcerr.Domain` "set before startup" contract is decided (documented as final — they are plain package variables with no partial-write hazard)
+- [ ] gRPC wire-level round-trip test — the last correctness-confidence gap (see [ROADMAP.md](ROADMAP.md))
+
+Once that test lands, v1.0 can be tagged.
 
 ## License
 

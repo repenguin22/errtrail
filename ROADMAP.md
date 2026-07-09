@@ -12,18 +12,20 @@ hardening and ecosystem work.
 ## Hardening and ecosystem
 
 Shipped so far: the code registry became thread-safe (copy-on-write) in core
-v0.5.0, and CI now measures per-module coverage, writes it to the job summary,
-and gates on a 90% floor (self-contained — no external service or badge). Note
-that `problem.TypeURL` and `grpcerr.Domain` deliberately stay on the documented
-"set before startup" contract — they are plain package variables with no
-partial-write hazard, so the cost/benefit of atomics there is different.
+v0.5.0; CI measures per-module coverage and gates on a 90% floor
+(self-contained — no external service or badge); and `CHANGELOG.md` +
+[Versioning and stability](README.md#versioning-and-stability) now record the
+history and the v1.0 criteria. Note that `problem.TypeURL` and `grpcerr.Domain`
+deliberately stay on the documented "set before startup" contract — they are
+plain package variables with no partial-write hazard, so the cost/benefit of
+atomics there is different.
 
-### 1. CHANGELOG and a v1.0 plan
+### 1. Cut v1.0
 
-Adopters need a signal that the API is stable. Add `CHANGELOG.md` (Keep a
-Changelog format), backfill the v0.x releases, and state the v1.0 criteria
-in the README (essentially: the P1 features have all shipped, so what's
-left is closing the open questions in this file).
+The v1.0 criteria live in the README. Everything is checked off except the gRPC
+wire-level round-trip test (#2 below) — once that lands, tag v1.0 across the
+modules and commit to SemVer compatibility (no breaking change without a major
+bump).
 
 ### 2. gRPC wire-level round-trip test (the one real E2E gap)
 
