@@ -95,7 +95,8 @@ var TypeURL func(errtrail.Code) string
 //	Status     = errtrail.CodeOf(err).HTTPStatus()
 //	Title      = http.StatusText(Status), or the code name when http.StatusText
 //	             does not know the status (e.g. Canceled's 499)
-//	Detail     = errtrail.PublicMessage(err), or empty if it equals Title (avoids redundancy)
+//	Detail     = the explicitly-set public message (errtrail.LookupPublicMessage),
+//	             or empty if none is set or it equals Title (avoids redundancy)
 //	Code       = errtrail.CodeOf(err).String()
 //	Type       = TypeURL(code) if TypeURL is set, otherwise empty
 //	Extensions = errtrail.PublicFields(err)
@@ -114,7 +115,10 @@ func From(err error, opts ...Option) Problem {
 		title = code.String()
 	}
 
-	detail := errtrail.PublicMessage(err)
+	// Only an explicitly-set public message becomes the detail; the client
+	// already gets the generic wording via title, so no fallback is needed
+	// (and a public message equal to the title is dropped as redundant).
+	detail, _ := errtrail.LookupPublicMessage(err)
 	if detail == title {
 		detail = ""
 	}

@@ -67,10 +67,28 @@ func IsRetryable(err error) bool {
 	return CodeOf(err).Retryable()
 }
 
+// LookupPublicMessage walks err's chain from the outside in and returns the
+// first explicitly-set public message, reporting whether one was found. It
+// never falls back to anything — use it when the caller wants its own
+// fallback policy (grpcerr falls back to the code name; an i18n layer might
+// pick a translation). PublicMessage is this plus an http.StatusText
+// fallback.
+func LookupPublicMessage(err error) (string, bool) {
+	msg := ""
+	walk(err, func(e *Error) bool {
+		if e.public != "" {
+			msg = e.public
+			return false
+		}
+		return true
+	})
+	return msg, msg != ""
+}
+
 // PublicMessage walks err's chain from the outside in and returns the first
 // non-empty public message found. If none is set, it falls back to
 // http.StatusText(CodeOf(err).HTTPStatus()). It never falls back to an
-// internal message.
+// internal message. Use LookupPublicMessage to apply a different fallback.
 //
 // http.StatusText returns "" for statuses it does not know — notably Canceled
 // (499) and custom codes mapped to a non-standard HTTP status — so for those
@@ -80,15 +98,7 @@ func PublicMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := ""
-	walk(err, func(e *Error) bool {
-		if e.public != "" {
-			msg = e.public
-			return false
-		}
-		return true
-	})
-	if msg != "" {
+	if msg, ok := LookupPublicMessage(err); ok {
 		return msg
 	}
 	return http.StatusText(CodeOf(err).HTTPStatus())

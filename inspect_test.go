@@ -106,6 +106,31 @@ func TestPublicMessageNil(t *testing.T) {
 	}
 }
 
+func TestLookupPublicMessage(t *testing.T) {
+	if msg, ok := LookupPublicMessage(nil); ok || msg != "" {
+		t.Errorf("LookupPublicMessage(nil) = %q, %v; want \"\", false", msg, ok)
+	}
+	if msg, ok := LookupPublicMessage(errors.New("plain")); ok || msg != "" {
+		t.Errorf("LookupPublicMessage(plain) = %q, %v; want \"\", false", msg, ok)
+	}
+	// Unset public: no fallback, unlike PublicMessage.
+	if msg, ok := LookupPublicMessage(New(NotFound, "row missing")); ok || msg != "" {
+		t.Errorf("LookupPublicMessage(unset) = %q, %v; want \"\", false", msg, ok)
+	}
+
+	inner := New(NotFound, "row missing").WithPublic("User not found")
+	outer := Wrap(inner, "load profile")
+	if msg, ok := LookupPublicMessage(outer); !ok || msg != "User not found" {
+		t.Errorf("LookupPublicMessage(chain) = %q, %v; want set message", msg, ok)
+	}
+
+	// The first (outermost) explicitly-set message wins.
+	overridden := Wrap(inner, "load profile").WithPublic("Profile unavailable")
+	if msg, _ := LookupPublicMessage(overridden); msg != "Profile unavailable" {
+		t.Errorf("LookupPublicMessage(overridden) = %q, want outermost", msg)
+	}
+}
+
 func TestTraceOrder(t *testing.T) {
 	inner := New(NotFound, "get")   // where it originated
 	outer := Wrap(inner, "service") // outermost wrap

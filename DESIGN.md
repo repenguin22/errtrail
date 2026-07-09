@@ -257,17 +257,23 @@ func CodeOf(err error) Code
 // conservatively not retryable). No errors.Is inspection is performed.
 func IsRetryable(err error) bool
 
-// PublicMessage walks the chain from the outside in and returns the first
-// non-empty public message found. Falls back to
-// http.StatusText(CodeOf(err).HTTPStatus()) if none is set
-// (e.g. NotFound -> "Not Found"). Never falls back to an internal message.
+// LookupPublicMessage walks the chain from the outside in and returns the
+// first explicitly-set public message, reporting whether one was found. It
+// never falls back — for callers that want their own fallback policy
+// (grpcerr.ToStatus falls back to the code name; problem.From leaves the
+// detail empty because title already carries the generic wording; an i18n
+// layer might pick a translation).
+func LookupPublicMessage(err error) (string, bool)
+
+// PublicMessage is LookupPublicMessage plus a fallback to
+// http.StatusText(CodeOf(err).HTTPStatus()) (e.g. NotFound -> "Not Found").
+// Never falls back to an internal message.
 //
 // Note: http.StatusText returns "" for status codes it does not know —
 // notably Canceled (499) and any custom code mapped to a non-standard HTTP
-// status. For such a code with no explicitly-set public message,
-// PublicMessage (and therefore the gRPC message and the problem Detail/Title)
-// is the empty string. Set an explicit WithPublic on codes like these if a
-// client-facing message is required.
+// status — so PublicMessage returns "" for such a code with no explicit
+// public message. The gRPC and problem paths don't use this fallback and
+// are unaffected.
 func PublicMessage(err error) string
 
 // Trace returns the frames of every *Error in the chain, ordered from the
@@ -424,7 +430,8 @@ func Instance(uri string) Option
 //   Status     = errtrail.CodeOf(err).HTTPStatus()
 //   Title      = http.StatusText(Status), or the code name when http.StatusText
 //                does not know the status (e.g. Canceled's 499)
-//   Detail     = errtrail.PublicMessage(err) — empty if it equals Title (avoids redundancy)
+//   Detail     = the explicitly-set public message (errtrail.LookupPublicMessage),
+//                or empty if none is set or it equals Title (avoids redundancy)
 //   Code       = errtrail.CodeOf(err).String()
 //   Type       = TypeURL(CodeOf(err)) if TypeURL is set, otherwise empty
 //   Extensions = errtrail.PublicFields(err)
