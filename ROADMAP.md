@@ -20,13 +20,15 @@ deliberately stay on the documented "set before startup" contract — they are
 plain package variables with no partial-write hazard, so the cost/benefit of
 atomics there is different.
 
-### 1. Pre-v1.0 fixes from the final review round (2026-07-10)
+### 1. Pre-v1.0 fixes from the final review round (2026-07-10) — SHIPPED
+
+Shipped as core **v0.7.0** and grpcerr **v0.5.0** (two-stage, core tagged
+first as usual; otelerr unchanged). Kept below for the record.
 
 Two external reviews ran before tagging v1.0; every claim below was verified
 against the code (the behavioral ones empirically). These are the adopted
-items — all semantics changes that would be breaking after v1.0, so they must
-land first. Expected releases: core **v0.7.0**, then grpcerr **v0.5.0**
-(two-stage, core tagged first as usual). otelerr unchanged.
+items — all semantics changes that would be breaking after v1.0, so they had
+to land first.
 
 Code changes:
 
@@ -109,12 +111,12 @@ term; docs carry the nuance); a snapshot-consistent registry lookup API;
 branch-atomic Join semantics; changing `problem.From(nil)`'s documented
 200-OK behavior; deep-copying attr/field values.
 
-### 2. Cut v1.0
+### 2. Cut v1.0 — DONE
 
-After #1 lands: tag core v1.0.0 first, bump the submodules' core requirement,
-tag `grpcerr/v1.0.0` and `otelerr/v1.0.0`; add CHANGELOG entries and flip the
-README's pre-1.0 wording to the SemVer compatibility promise (no breaking
-change without a major bump). Update the README v1.0 checklist to include the
+Tagged core v1.0.0 first, bumped the submodules' core requirement, tagged
+`grpcerr/v1.0.0` and `otelerr/v1.0.0`; CHANGELOG entries added and the
+README's pre-1.0 wording flipped to the SemVer compatibility promise (no
+breaking change without a major bump). The README v1.0 checklist records the
 review-round fixes.
 
 Deliberately-not-doing notes kept for the record: a real-server HTTP E2E

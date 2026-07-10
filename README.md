@@ -392,21 +392,21 @@ git tag otelerr/v0.1.0    # otelerr submodule
 
 A submodule's `require` points at a tagged core version (no `replace`); when developing several modules together, put a `go.work` outside the repo. See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-**Everything is pre-1.0 today.** While on `v0.x`, a minor bump may add API and, rarely, change wire or response behavior (always called out in the changelog); a patch is fixes only. Pin the versions you depend on.
+**All three modules are v1.0+ and follow the SemVer compatibility promise:**
+no breaking change to the public API or to documented wire/response behavior
+without a major version bump. A minor version may add API surface; a patch is
+fixes only. Behavior changes of any kind are called out in the changelog.
 
-### Toward v1.0
+### The road to v1.0 (record)
 
-The feature surface is settled; v1.0 is a promise to keep it stable (no breaking change without a major bump). Remaining criteria:
+v1.0 was a promise to keep the settled feature surface stable. The criteria,
+all met before tagging:
 
 - [x] P1 feature set complete (public fields, retryability, gRPC round-trip, OTel)
 - [x] Registry is thread-safe; CI gates per-module coverage
 - [x] The `problem.TypeURL` / `grpcerr.Domain` "set before startup" contract is decided (documented as final — they are plain package variables with no partial-write hazard)
 - [x] gRPC wire-level round-trip test — a real `grpc.Server`/`ClientConn` over bufconn verifies that `ErrorInfo` details survive the actual transport (`grpcerr/e2e_test.go`)
-
-All original criteria are met. A final review round (2026-07-10) surfaced a
-short list of pre-v1.0 semantics fixes — things that would be breaking to
-change later — tracked in [ROADMAP.md](ROADMAP.md); v1.0 is tagged once those
-land.
+- [x] Pre-v1.0 semantics fixes from the final review round (2026-07-10, core v0.7.0 / grpcerr v0.5.0): `WithoutPublic()`, tightened `Register` validation, `PublicFields` last-write-wins within a node, the `PublicMessage` code-name fallback, `FromOption`/`TrustedDomain`, and ErrorInfo only for registered codes — every change that would have been breaking after v1.0
 
 ## License
 

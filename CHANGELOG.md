@@ -8,16 +8,27 @@ tag line — `vX.Y.Z` (core), `grpcerr/vX.Y.Z`, `otelerr/vX.Y.Z`. They are
 therefore listed in separate sections below. This file is the canonical history;
 the GitHub Releases pages are a generated view of the same information.
 
-All releases are pre-1.0. See [Versioning and stability](README.md#versioning-and-stability)
-in the README for what that means and for the criteria for cutting v1.0.
+Since v1.0.0 the three modules follow the SemVer compatibility promise — no
+breaking change to the public API or to documented wire/response behavior
+without a major version bump. See
+[Versioning and stability](README.md#versioning-and-stability) in the README.
 
 ---
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
-### [v0.7.0] — 2026-07-10
+### [v1.0.0] — 2026-07-11
 
-The pre-v1.0 semantics fixes from the final review round (see ROADMAP §1) —
+- First stable release — identical in code to **v0.7.0**. From here on the
+  SemVer compatibility promise applies: no breaking change to the public API
+  or to documented wire/response behavior without a major version bump. All
+  v1.0 criteria, including the final review-round fixes (v0.7.0), are met;
+  the README's [road to v1.0](README.md#the-road-to-v10-record) records them.
+
+### [v0.7.0] — 2026-07-11
+
+The pre-v1.0 semantics fixes from the final review round (2026-07-10, see
+ROADMAP §1) —
 changes that would have been breaking after v1.0.
 
 - **Added** `(*Error).WithoutPublic()` — a public-data barrier: the cause chain
@@ -125,7 +136,12 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [grpcerr/v0.5.0] — 2026-07-10
+### [grpcerr/v1.0.0] — 2026-07-11
+
+- First stable release — identical in code to **grpcerr/v0.5.0** with the core
+  requirement bumped to **v1.0.0**. The SemVer compatibility promise applies.
+
+### [grpcerr/v0.5.0] — 2026-07-11
 
 - **Added** `FromError` / `FromStatus` now take `opts ...FromOption`; existing
   calls compile unchanged. The variadic shape had to exist before v1.0 —
@@ -181,6 +197,12 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/otelerr — `github.com/repenguin22/errtrail/otelerr`
+
+### [otelerr/v1.0.0] — 2026-07-11
+
+- First stable release — identical in code to **otelerr/v0.1.0** (plus the
+  server-fault derivation note from the review round) with the core
+  requirement bumped to **v1.0.0**. The SemVer compatibility promise applies.
 
 ### [otelerr/v0.1.0] — 2026-07-09
 
