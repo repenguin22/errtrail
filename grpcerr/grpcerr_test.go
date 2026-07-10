@@ -2,6 +2,9 @@ package grpcerr
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +12,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/protoadapt"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -466,6 +470,74 @@ func TestBadRequestFromViolations(t *testing.T) {
 	}
 }
 
+func TestToStatusAdversarialNeverLeaksInternals(t *testing.T) {
+	registerThrottled()
+	setDomain(t, "errtrail.test")
+
+	// Adversarial: the nastiest realistic chain — credentials in the root
+	// cause, internal messages and attrs at several layers, a std fmt
+	// layer, a Join with a barrier in one branch — serialized to the wire
+	// proto (message + details, exactly what crosses the transport in the
+	// grpc-status-details-bin trailer). Nothing internal may appear, and a
+	// barrier-blocked branch's violations must not become BadRequest.
+	base := errors.New(`pq: password authentication failed for "svc-hunter2"`)
+	// The blocked branch deliberately sets no Code: the barrier blocks
+	// public data, not codes, so a code here would win CodeOf's
+	// first-non-OK walk and change which details attach.
+	blockedBranch := errtrail.Wrap(
+		errtrail.Wrap(errors.New("internal-lookup-detail"), "inner lookup").
+			WithPublic("leak-public-below-barrier").
+			WithFieldViolation("internal_field", "leak-violation-below-barrier"),
+		"barrier layer").WithoutPublic()
+	openBranch := errtrail.Wrap(base, "query user by email").
+		WithCode(throttled).
+		With(slog.String("user_email", "leak-attr@example.com")).
+		WithPublic("Throttled").
+		WithFieldViolation("query", "too broad")
+	mid := fmt.Errorf("repo layer: %w", errors.Join(blockedBranch, openBranch))
+	outer := errtrail.Wrap(mid, "handle profile request")
+
+	st := ToStatus(outer)
+	wire, err := proto.Marshal(st.Proto())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(wire)
+
+	leaks := []string{
+		"hunter2", "password", "pq:",
+		"internal-lookup-detail", "query user by email", "repo layer",
+		"handle profile request", "barrier layer",
+		"user_email", "leak-attr", "leak-public-below-barrier",
+		"internal_field", "leak-violation-below-barrier",
+		".go:", "grpcerr_test",
+	}
+	for _, s := range leaks {
+		if strings.Contains(body, s) {
+			t.Errorf("wire proto leaked internal data %q", s)
+		}
+	}
+
+	// Sanity: the public data did make it, so the checks above can't pass
+	// vacuously. The barrier branch contributes nothing; the open branch's
+	// public message, code name, delay, and violation all survive.
+	if st.Message() != "Throttled" {
+		t.Errorf("Message = %q, want Throttled", st.Message())
+	}
+	details := st.Details()
+	if len(details) != 3 {
+		t.Fatalf("len(Details) = %d, want 3 (ErrorInfo, RetryInfo, BadRequest)", len(details))
+	}
+	br, ok := details[2].(*errdetails.BadRequest)
+	if !ok {
+		t.Fatalf("details[2] = %T, want *errdetails.BadRequest", details[2])
+	}
+	vs := br.GetFieldViolations()
+	if len(vs) != 1 || vs[0].GetField() != "query" {
+		t.Errorf("FieldViolations = %v, want only the open branch's violation", vs)
+	}
+}
+
 func TestNoBadRequestBelowWithoutPublicBarrier(t *testing.T) {
 	// Reclassifying with WithoutPublic must also keep the inner field
 	// violations off the gRPC wire — no BadRequest detail.
@@ -545,5 +617,44 @@ func TestRetryDelayIgnoresEmptyRetryInfo(t *testing.T) {
 	}
 	if d, ok := RetryDelay(st2.Err()); !ok || d != 4*time.Second {
 		t.Errorf("RetryDelay(empty then real) = %v, %v; want 4s, true", d, ok)
+	}
+}
+
+func TestRetryDelayRejectsInvalidDuration(t *testing.T) {
+	// A proto-invalid Duration (beyond ±10000 years) would silently
+	// saturate AsDuration to ±292 years — a caller sleeping on it would
+	// hang effectively forever. CheckValid gates it out.
+	malformed := &durationpb.Duration{Seconds: 315576000001} // > protobuf max
+	st, err := status.New(codes.Unavailable, "down").WithDetails(
+		&errdetails.RetryInfo{RetryDelay: malformed},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := RetryDelay(st.Err()); ok || d != 0 {
+		t.Errorf("RetryDelay(out-of-range) = %v, %v; want 0, false", d, ok)
+	}
+
+	// Negative delays carry no recommendation either.
+	stNeg, err := status.New(codes.Unavailable, "down").WithDetails(
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(-time.Second)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := RetryDelay(stNeg.Err()); ok {
+		t.Error("RetryDelay(negative) ok = true, want false")
+	}
+
+	// A valid delay after a malformed one still wins.
+	stMixed, err := status.New(codes.Unavailable, "down").WithDetails(
+		&errdetails.RetryInfo{RetryDelay: malformed},
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(3 * time.Second)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := RetryDelay(stMixed.Err()); !ok || d != 3*time.Second {
+		t.Errorf("RetryDelay(malformed then valid) = %v, %v; want 3s, true", d, ok)
 	}
 }
