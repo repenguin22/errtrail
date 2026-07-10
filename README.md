@@ -8,9 +8,9 @@ A Go error library for web services (HTTP / gRPC). See [DESIGN.md](DESIGN.md) fo
 - **Stdlib-only core** — the gRPC conversion is isolated in a separate `grpcerr` module.
 - **Lightweight call-site tracking** — `New` / `Wrap` each record one caller frame. No stack traces.
 - **Fully compatible with the standard `errors` package** — works with `Is` / `As` / `Unwrap` / `Join`.
-- **Internal vs. public separation** — clients only ever see the public message and public fields; internal messages and attrs stay in your logs.
+- **Internal vs. public separation** — exactly three channels reach a client (public message, public fields, field violations); internal messages and attrs stay in your logs.
 - **`slog.LogValuer` implementation** and **RFC 9457 (Problem Details)** responses, including extension members.
-- **Same taxonomy end to end** — carry code names across gRPC and rebuild them on the calling side.
+- **Same taxonomy end to end** — carry code names across gRPC and rebuild them on the calling side; retry delays (`RetryInfo`) and validation details (`BadRequest`) ride along automatically.
 
 ## Install
 
@@ -42,8 +42,8 @@ out of the `Code` for free. The rest of this section walks each layer in turn;
 Where the error originates, attach everything you know in one place: a **`Code`**
 (the classification, and the single source of truth for the HTTP/gRPC status), an
 **internal message** for your own eyes, and — only if a client should see them —
-a **public message** and structured **public fields**. `With` adds `slog`
-attributes that stay in the logs.
+a **public message**, structured **public fields**, and **field violations**
+for validation failures. `With` adds `slog` attributes that stay in the logs.
 
 ```go
 if row == nil {
@@ -223,8 +223,8 @@ visiting the first branch first — the same rule used for a plain `Wrap` chain,
 just applied per branch:
 
 ```go
-a := errtrail.New(errtrail.InvalidArgument, "email invalid").WithPublicField("field", "email")
-b := errtrail.New(errtrail.InvalidArgument, "age invalid").WithPublicField("field", "age")
+a := errtrail.New(errtrail.InvalidArgument, "email invalid").WithFieldViolation("email", "must be valid")
+b := errtrail.New(errtrail.InvalidArgument, "age invalid").WithFieldViolation("age", "must be >= 0")
 joined := errors.Join(a, b)
 ```
 
@@ -238,17 +238,20 @@ joined := errors.Join(a, b)
   `WithPublic` on the `Join` result rather than relying on which validator ran
   first.
 - **`Trace` / `Attrs`** collect **every branch**, so nothing is lost from logs.
+- **`FieldViolations` concatenates every branch** — it's a list, not a map, so
+  joined validators never collide: both violations above reach the client
+  (the `errors` member over HTTP, `BadRequest` over gRPC). This is why
+  validation data belongs in violations.
 - **`PublicFields` collects every branch too, but a duplicate key keeps only
-  the first branch's value** — the same outermost-wins rule `Wrap` chains use.
-  In the example above, only `a`'s `"field": "email"` survives; `b`'s `"field":
-  "age"` is silently dropped. **Use distinct keys per validation error** (e.g.
-  key by field name, or collect a slice under one key such as `"errors"`)
-  rather than relying on the same key across joined errors.
+  the first branch's value** — the same outermost-wins rule `Wrap` chains use;
+  a `"field"` key set by both `a` and `b` would silently keep only `a`'s.
+  Use distinct keys per branch, or — for anything list-shaped — use
+  `WithFieldViolation`, which has no keys to collide.
 
 ### Inspecting the propagation path
 
-`%+v` prints the full chain — message, code, public message and fields, attrs,
-and the recorded trace — for debugging and tests:
+`%+v` prints the full chain — message, code, public message, public fields and
+field violations, attrs, and the recorded trace — for debugging and tests:
 
 ```
 load profile: query user: sql: no rows in result set
@@ -305,13 +308,15 @@ A checklist, with the reasoning behind each rule:
   a message string.
 - **Retry on `IsRetryable`, not a hand-maintained list.** Built-ins `Unavailable`,
   `DeadlineExceeded`, `ResourceExhausted`, and `Aborted` are retryable; custom
-  codes opt in with `errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`.
-  It's a *transience hint* derived only from the `Code` — whether replaying the
-  request is safe (idempotency, retry budget, server pushback) is still your call.
+  codes opt in with `errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`
+  — or `errtrail.RetryAfter(d)`, which also ships a recommended delay to gRPC
+  clients as a `RetryInfo` detail. It's a *transience hint* derived only from
+  the `Code` — whether replaying the request is safe (idempotency, retry
+  budget, server pushback) is still your call.
 
 ## Structured logging
 
-`*Error` implements `slog.LogValuer`, so passing it to `slog.Any("error", err)` nests it as a structured group instead of a flat string — as long as `err` is a `*errtrail.Error` (wrap plain errors with `errtrail.Wrap` before logging them). `public` is deliberately left out; it's for response generation, not logs.
+`*Error` implements `slog.LogValuer`, so passing it to `slog.Any("error", err)` nests it as a structured group instead of a flat string — as long as `err` is a `*errtrail.Error` (wrap plain errors with `errtrail.Wrap` before logging them). The public message, public fields, and field violations are deliberately left out; they're for response generation, not logs.
 
 ```go
 slog.New(slog.NewJSONHandler(os.Stdout, nil)).
@@ -399,13 +404,15 @@ mid-request.
 
 ## Benchmarks
 
-Apple M-series, Go 1.26. `New` / `Wrap` are 1 alloc each, including frame recording.
+Apple M1 Pro, Go 1.26, as of v1.1. `New` / `Wrap` are still 1 alloc each,
+including frame recording (the struct grew with v1.1's field-violation and
+barrier support — hence 144 B, up from 96 B pre-v1.1).
 
 ```
-BenchmarkNew-10          8312416    141.2 ns/op    96 B/op   1 allocs/op
-BenchmarkWrap-10         8593356    148.6 ns/op    96 B/op   1 allocs/op
-BenchmarkWrapChain3-10   2671467    441.1 ns/op   288 B/op   3 allocs/op
-BenchmarkFormatPlusV-10   869619   1329   ns/op  3345 B/op  24 allocs/op
+BenchmarkNew-10          11877836    201.8 ns/op    144 B/op   1 allocs/op
+BenchmarkWrap-10         11174144    198.5 ns/op    144 B/op   1 allocs/op
+BenchmarkWrapChain3-10    3570674    645.4 ns/op    432 B/op   3 allocs/op
+BenchmarkFormatPlusV-10   1000000   2085   ns/op   3489 B/op  25 allocs/op
 ```
 
 ## Versioning and stability
