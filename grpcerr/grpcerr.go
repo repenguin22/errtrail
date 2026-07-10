@@ -195,11 +195,14 @@ func foldFromOptions(opts []FromOption) fromOptions {
 }
 
 // RetryDelay returns the retry delay carried by the first
-// errdetails.RetryInfo detail on err's gRPC status, reporting whether one
-// was found. It pairs with the server side registering a code with
-// errtrail.RetryAfter, but reads any RetryInfo regardless of origin.
-// Returns (0, false) for nil, non-status errors, and statuses without a
-// RetryInfo detail.
+// errdetails.RetryInfo detail on err's gRPC status that holds a positive
+// delay, reporting whether one was found. It pairs with the server side
+// registering a code with errtrail.RetryAfter, but reads any RetryInfo
+// regardless of origin. Returns (0, false) for nil, non-status errors,
+// statuses without a RetryInfo detail, and — since "retry after zero"
+// carries no recommendation — RetryInfo details whose delay is unset, zero,
+// or negative (a foreign service may attach an empty RetryInfo{};
+// errtrail's own RetryAfter only registers positive delays).
 //
 // Like IsRetryable (which stays derived from the Code alone), the delay is
 // a hint — honoring it, idempotency, and retry budgets remain the caller's
@@ -213,7 +216,9 @@ func RetryDelay(err error) (time.Duration, bool) {
 	st, _ := status.FromError(err)
 	for _, d := range st.Details() {
 		if info, ok := d.(*errdetails.RetryInfo); ok {
-			return info.GetRetryDelay().AsDuration(), true
+			if delay := info.GetRetryDelay().AsDuration(); delay > 0 {
+				return delay, true
+			}
 		}
 	}
 	return 0, false

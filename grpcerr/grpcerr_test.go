@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/protoadapt"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/repenguin22/errtrail"
 )
@@ -465,6 +466,23 @@ func TestBadRequestFromViolations(t *testing.T) {
 	}
 }
 
+func TestNoBadRequestBelowWithoutPublicBarrier(t *testing.T) {
+	// Reclassifying with WithoutPublic must also keep the inner field
+	// violations off the gRPC wire — no BadRequest detail.
+	inner := errtrail.New(errtrail.NotFound, "row missing").
+		WithFieldViolation("user_id", "does not exist")
+	err := errtrail.Wrap(inner, "reclassify").
+		WithCode(errtrail.PermissionDenied).WithoutPublic()
+
+	st := ToStatus(err)
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("Code = %v, want PermissionDenied", st.Code())
+	}
+	if n := len(st.Details()); n != 0 {
+		t.Errorf("len(Details) = %d, want 0 (violations blocked by the barrier)", n)
+	}
+}
+
 func TestAllDetailsTogetherInOrder(t *testing.T) {
 	registerThrottled()
 	setDomain(t, "errtrail.test")
@@ -502,5 +520,30 @@ func TestRetryDelayHelper(t *testing.T) {
 	}
 	if _, ok := RetryDelay(ToError(errtrail.New(errtrail.Unavailable, "x"))); ok {
 		t.Error("RetryDelay(no detail) ok = true, want false")
+	}
+}
+
+func TestRetryDelayIgnoresEmptyRetryInfo(t *testing.T) {
+	// A foreign service may attach a RetryInfo with no (or a zero) delay —
+	// "retry after zero" carries no recommendation, so it must read as
+	// absent, not as (0, true).
+	st, err := status.New(codes.Unavailable, "down").WithDetails(&errdetails.RetryInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := RetryDelay(st.Err()); ok || d != 0 {
+		t.Errorf("RetryDelay(empty RetryInfo) = %v, %v; want 0, false", d, ok)
+	}
+
+	// A later RetryInfo with a real delay still wins over an earlier empty one.
+	st2, err := status.New(codes.Unavailable, "down").WithDetails(
+		&errdetails.RetryInfo{},
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(4 * time.Second)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := RetryDelay(st2.Err()); !ok || d != 4*time.Second {
+		t.Errorf("RetryDelay(empty then real) = %v, %v; want 4s, true", d, ok)
 	}
 }
