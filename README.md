@@ -185,6 +185,16 @@ if err != nil {
 }
 ```
 
+Custom-code recovery requires the `ErrorInfo.Reason` to name a locally
+registered code *and* its registered gRPC code to match the wire code. If the
+client also talks to services outside your taxonomy, tighten it further with
+`TrustedDomain` — recovery then additionally requires the `ErrorInfo.Domain`
+to match:
+
+```go
+terr := grpcerr.FromError(err, grpcerr.TrustedDomain("user.example.com"))
+```
+
 There's no HTTP equivalent of `FromError` — gRPC codes map to `Code`
 one-to-one, but an HTTP status is inherently many-to-one (`400` could be
 `InvalidArgument`, `FailedPrecondition`, or `OutOfRange`), so a generic

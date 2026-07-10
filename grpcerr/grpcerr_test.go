@@ -232,6 +232,75 @@ func TestFromErrorCustomCodeWithoutDetails(t *testing.T) {
 	}
 }
 
+func TestTrustedDomainMatch(t *testing.T) {
+	registerRateLimited()
+	setDomain(t, "errtrail.test")
+
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+	got := FromError(gerr, TrustedDomain("errtrail.test"))
+	if code := errtrail.CodeOf(got); code != rateLimited {
+		t.Errorf("CodeOf = %v, want rateLimited (trusted domain matches)", code)
+	}
+}
+
+func TestTrustedDomainMismatch(t *testing.T) {
+	registerRateLimited()
+	setDomain(t, "errtrail.test")
+
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+	got := FromError(gerr, TrustedDomain("other.example.com"))
+	if code := errtrail.CodeOf(got); code != errtrail.ResourceExhausted {
+		t.Errorf("CodeOf = %v, want ResourceExhausted (untrusted domain degrades to the wire code)", code)
+	}
+}
+
+func TestTrustedDomainMultipleAndAppend(t *testing.T) {
+	registerRateLimited()
+	setDomain(t, "errtrail.test")
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+
+	// Any of several domains matches.
+	got := FromError(gerr, TrustedDomain("a.example.com", "errtrail.test"))
+	if code := errtrail.CodeOf(got); code != rateLimited {
+		t.Errorf("CodeOf = %v, want rateLimited (one of several domains)", code)
+	}
+	// Passing the option twice appends rather than replaces.
+	got = FromError(gerr, TrustedDomain("a.example.com"), TrustedDomain("errtrail.test"))
+	if code := errtrail.CodeOf(got); code != rateLimited {
+		t.Errorf("CodeOf = %v, want rateLimited (options accumulate)", code)
+	}
+}
+
+func TestTrustedDomainZeroArgsNoOp(t *testing.T) {
+	registerRateLimited()
+	setDomain(t, "errtrail.test")
+
+	gerr := ToError(errtrail.New(rateLimited, "slow down"))
+	if code := errtrail.CodeOf(FromError(gerr, TrustedDomain())); code != rateLimited {
+		t.Errorf("CodeOf = %v, want rateLimited (no domains = no restriction)", code)
+	}
+}
+
+func TestTrustedDomainBlocksForeignTaxonomy(t *testing.T) {
+	registerRateLimited()
+	// A foreign service that reuses BOTH the Reason name and the numeric
+	// code slips through the default double check — that combination is
+	// exactly what TrustedDomain exists to reject.
+	st, err := status.New(codes.ResourceExhausted, "slow down").WithDetails(&errdetails.ErrorInfo{
+		Reason: "RATE_LIMITED",
+		Domain: "foreign.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := errtrail.CodeOf(FromStatus(st)); code != rateLimited {
+		t.Errorf("CodeOf (default) = %v, want rateLimited (documents the default)", code)
+	}
+	if code := errtrail.CodeOf(FromStatus(st, TrustedDomain("errtrail.test"))); code != errtrail.ResourceExhausted {
+		t.Errorf("CodeOf (trusted) = %v, want ResourceExhausted (foreign domain rejected)", code)
+	}
+}
+
 func TestFromStatusRejectsMismatchedReason(t *testing.T) {
 	registerRateLimited()
 	// A foreign taxonomy might reuse the name RATE_LIMITED under a different
