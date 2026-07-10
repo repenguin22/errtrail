@@ -257,6 +257,8 @@ field violations, attrs, and the recorded trace — for debugging and tests:
 load profile: query user: sql: no rows in result set
   code: NOT_FOUND
   public: User not found
+  public.fields: resource=user
+  public.violations: user_id=does not exist
   attrs: user_id=42
   trace:
     example.com/app/service.(*UserService).Profile (/src/app/service/user.go:88): load profile
@@ -280,7 +282,10 @@ A checklist, with the reasoning behind each rule:
   NotFound must not carry the lookup's field violations either). When the
   point of reclassifying is to *hide* the original failure, add
   `WithoutPublic()` — it blocks all three public channels below it — then set
-  a fresh `WithPublic` if needed.
+  a fresh `WithPublic` if needed. **Call it on a fresh `Wrap(err, ...)`, not
+  on `err` itself**: the node you call it on keeps its *own* public data
+  above the barrier, so `err.WithoutPublic()` still exposes everything
+  attached directly to `err`.
 - **Keep internal and public strictly separate.** Exactly **three channels**
   reach a client — `WithPublic`, `WithPublicField`, and `WithFieldViolation` —
   and nothing else ever does; the internal message and `With` attrs are for

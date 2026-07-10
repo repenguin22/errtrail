@@ -105,7 +105,8 @@ var TypeURL func(errtrail.Code) string
 //	             field violations (errtrail.WithFieldViolation) — an "errors"
 //	             member holding them as [{"field", "description"}, ...]. An
 //	             explicit WithPublicField("errors", ...) wins over the derived
-//	             member (explicit beats derived).
+//	             member (explicit beats derived — even an explicit nil value
+//	             suppresses it, serializing as "errors": null).
 //
 // Options (e.g. Instance) are applied last. Problem responses describe
 // errors; passing a nil err yields a 200 "OK" problem, which is almost

@@ -127,8 +127,13 @@ func (e *Error) WithPublic(msg string) *Error {
 //	    WithPublic("Forbidden") // optional: the new public message, set above the barrier
 //
 // The barrier blocks only the chain below the node, so chaining WithPublic /
-// WithPublicField before or after WithoutPublic on the same node makes no
-// difference — both operate on the node itself.
+// WithPublicField / WithFieldViolation before or after WithoutPublic on the
+// same node makes no difference — all operate on the node itself.
+//
+// For the same reason, call WithoutPublic on a fresh Wrap of the error — as
+// in the example above — NOT on the error value itself: err.WithoutPublic()
+// leaves err's own public message, fields, and violations above the barrier,
+// still visible to clients.
 func (e *Error) WithoutPublic() *Error {
 	if e == nil {
 		return nil

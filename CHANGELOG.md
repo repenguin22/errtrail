@@ -17,6 +17,27 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.1.2] — 2026-07-11
+
+Documentation only — no code change (final pre-release review).
+
+- **Docs** DESIGN.md caught up with v1.1 everywhere it still described v0.x:
+  Goal 5 now names the three client-visible channels; the `Error` struct
+  sketch and the `walk` signature match the implementation (fields,
+  violations, barrier flag, `blocked` argument); the `%+v` specification
+  includes the `public.violations:` line; the edge-case table states
+  `PublicMessage`'s two-level fallback and the per-function `Join` rules;
+  `grpcerr.RetryDelay`'s positive-delay contract (v1.1.1) is recorded.
+- **Docs** godoc fixes visible on pkg.go.dev: the package overview names the
+  three channels and the measured construction cost (~200ns / 144 B /
+  1 alloc as of v1.1); `LogValue` documents that field violations are also
+  excluded from logs; `problem.From` notes that an explicit
+  `WithPublicField("errors", nil)` suppresses the derived member.
+- **Docs** `WithoutPublic` misuse warning (godoc + README): call it on a
+  fresh `Wrap` — on the error value itself, that node's own public data
+  stays above the barrier. A regression test pins both the misuse outcome
+  and the documented form.
+
 ### [v1.1.1] — 2026-07-11
 
 Documentation only — no code change (review round on v1.1).

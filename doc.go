@@ -9,11 +9,12 @@
 //     lives in a separate grpcerr module.
 //   - New and Wrap each record just one caller frame, so the propagation
 //     path can be traced. No full stack traces are captured (construction
-//     costs roughly 100–150ns / 1 alloc).
+//     costs roughly 200ns / 144 B / 1 alloc as of v1.1).
 //   - Fully compatible with the standard errors package (Is / As / Unwrap /
 //     Join).
-//   - Internal messages (for logs) are separated from public messages and
-//     public extension fields (for clients).
+//   - Internal messages and attrs (for logs) are separated from the three
+//     client-visible channels: public messages, public extension fields,
+//     and field violations.
 //   - Implements slog.LogValuer, so structured logs get code, trace, and
 //     attrs for free.
 //

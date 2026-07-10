@@ -373,6 +373,39 @@ func TestWithoutPublicReAddOutside(t *testing.T) {
 	}
 }
 
+func TestWithoutPublicOnOriginalNodeKeepsOwnData(t *testing.T) {
+	// Misuse pin: WithoutPublic must be called on a fresh Wrap. Called on
+	// the error value itself, that node's OWN public data sits above the
+	// barrier and still reaches clients — only the chain below is blocked.
+	orig := New(NotFound, "row missing").
+		WithPublic("User not found").
+		WithPublicField("user_id", "42").
+		WithFieldViolation("user_id", "does not exist")
+
+	misused := orig.WithCode(PermissionDenied).WithoutPublic()
+	if got := PublicMessage(misused); got != "User not found" {
+		t.Errorf("PublicMessage = %q, want the node's own message (misuse keeps it)", got)
+	}
+	if got := PublicFields(misused); got["user_id"] != "42" {
+		t.Errorf("PublicFields = %v, want the node's own field", got)
+	}
+	if got := FieldViolations(misused); len(got) != 1 {
+		t.Errorf("FieldViolations = %v, want the node's own violation", got)
+	}
+
+	// The documented form — a fresh Wrap — blocks all three channels.
+	proper := Wrap(orig, "reclassify").WithCode(PermissionDenied).WithoutPublic()
+	if msg, ok := LookupPublicMessage(proper); ok {
+		t.Errorf("LookupPublicMessage = %q, want blocked", msg)
+	}
+	if got := PublicFields(proper); got != nil {
+		t.Errorf("PublicFields = %v, want nil", got)
+	}
+	if got := FieldViolations(proper); got != nil {
+		t.Errorf("FieldViolations = %v, want nil", got)
+	}
+}
+
 func TestWithoutPublicInternalUnaffected(t *testing.T) {
 	inner := New(NotFound, "row missing").
 		WithPublic("User not found").

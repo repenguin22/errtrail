@@ -2,7 +2,7 @@
 
 A Go error library for web services (HTTP / gRPC).
 
-- Status: Draft v1
+- Status: Living document — current as of v1.1
 - Module: `github.com/repenguin22/errtrail`
 - Go: 1.22+ (1.21 is the floor imposed by `log/slog`; development targets 1.22)
 
@@ -16,7 +16,7 @@ A Go error library for web services (HTTP / gRPC).
 2. **The core depends on the standard library only.** Only the conversion to gRPC's `*status.Status` is isolated in a separate go.mod submodule, `grpcerr`.
 3. **Track the origin and propagation path of an error.** `New` / `Wrap` each record just one caller frame. No full stack traces.
 4. **Fully compatible with the standard `errors` package.** Works alongside `errors.Is` / `errors.As` / `errors.Unwrap` / `errors.Join`.
-5. **Separate internal messages from public messages.** Only an explicitly-set public message is ever returned to a client.
+5. **Separate internal data from client-visible data.** Exactly three explicitly-set channels ever reach a client — the public message (`WithPublic`), public extension fields (`WithPublicField`), and field violations (`WithFieldViolation`); internal messages and attrs never do.
 6. **Structured logging integration.** Implements `slog.LogValuer`.
 7. **RFC 9457 (Problem Details) HTTP response generation**, provided via the `problem` subpackage.
 
@@ -178,7 +178,7 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 ```
 
 - 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
-- Implemented as an immutable `registry` snapshot (`codes map[Code]codeInfo` — `codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}` — plus a `names map[string]Code` reverse index for CodeByName) behind an `atomic.Pointer[registry]`. Readers do one atomic load and a map lookup; `Register` takes a writer-only mutex, clones the snapshot, adds the entry to both maps, and swaps the pointer. A lookup therefore never observes a partial write, and late registration is safe rather than undefined behavior. The 17 built-ins seed the first snapshot at init, so lookups go through a single path. Composite conversions (reading status, then name, then retryable) are race-free but not linearizable across a concurrent registration — a request in flight during a late registration can mix pre- and post-registration answers, which is one more reason to register at init. No snapshot-consistent lookup API is provided: entries are immutable once registered, so the window is that single in-flight request.
+- Implemented as an immutable `registry` snapshot (`codes map[Code]codeInfo` — `codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool; retryDelay time.Duration}` — plus a `names map[string]Code` reverse index for CodeByName) behind an `atomic.Pointer[registry]`. Readers do one atomic load and a map lookup; `Register` takes a writer-only mutex, clones the snapshot, adds the entry to both maps, and swaps the pointer. A lookup therefore never observes a partial write, and late registration is safe rather than undefined behavior. The 17 built-ins seed the first snapshot at init, so lookups go through a single path. Composite conversions (reading status, then name, then retryable) are race-free but not linearizable across a concurrent registration — a request in flight during a late registration can mix pre- and post-registration answers, which is one more reason to register at init. No snapshot-consistent lookup API is provided: entries are immutable once registered, so the window is that single in-flight request.
 - Options keep the signature open for future per-code metadata (e.g. a log-level hint) without another signature change.
 
 ---
@@ -187,12 +187,19 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 
 ```go
 type Error struct {
-    code   Code        // Zero value OK means "unset"; CodeOf delegates to the inner Error.
-    msg    string      // Internal message (for logs). Never shown to a client.
-    public string      // Public message shown to clients. Empty means unset.
-    cause  error       // The wrapped error. May be nil.
-    pc     uintptr     // One recorded caller frame (resolved lazily). 0 means "none".
-    attrs  []slog.Attr // Structured-logging attributes.
+    code       Code             // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+    msg        string           // Internal message (for logs). Never shown to a client.
+    public     string           // Public message shown to clients. Empty means unset.
+    cause      error            // The wrapped error. May be nil.
+    pc         uintptr          // One recorded caller frame (resolved lazily). 0 means "none".
+    attrs      []slog.Attr      // Structured-logging attributes (internal, logs only).
+    fields     []publicField    // Public extension fields (client-visible).
+    violations []FieldViolation // Field-level validation violations (client-visible).
+
+    // noPublicBelow marks this node as a public-data barrier (WithoutPublic):
+    // the cause chain below it contributes no public message, fields, or
+    // violations.
+    noPublicBelow bool
 }
 ```
 
@@ -363,8 +370,11 @@ func (f Frame) String() string
 ```go
 // walk visits *Error values in err's chain depth-first (itself, then
 // Unwrap; a Join visits its first branch first). Stops as soon as fn
-// returns false.
-func walk(err error, fn func(*Error) bool)
+// returns false. fn's blocked argument reports whether the node sits below
+// a WithoutPublic barrier — only the public-data collectors consult it.
+// Blocking is per subtree, threaded through the Join recursion, so a
+// barrier in one branch never blocks a sibling branch.
+func walk(err error, fn func(e *Error, blocked bool) bool)
 ```
 
 - Whenever an `errors.Join` / `Unwrap() []error` implementation is encountered, each element is recursed into in order.
@@ -391,6 +401,7 @@ get profile: query user: sql: no rows in result set
   code: NOT_FOUND
   public: User not found
   public.fields: resource=user
+  public.violations: user_id=does not exist
   attrs: user_id=42 attempt=3
   trace:
     example.com/app/service.(*UserService).Profile (/src/app/service/user.go:88): get profile
@@ -401,6 +412,7 @@ get profile: query user: sql: no rows in result set
 - `code:` line: `CodeOf(e).String()`
 - `public:` line: printed only when a public message was explicitly set (never a fallback value)
 - `public.fields:` line: omitted if no public fields; `key=value` pairs in walk order with duplicates kept (PublicFields' outermost-wins dedup applies only at response generation)
+- `public.violations:` line: omitted if no field violations; `field=description` pairs in walk order (matches FieldViolations)
 - `attrs:` line: omitted entirely if `Attrs(e)` is empty; `key=value` pairs separated by a single space
 - `trace:` and below: one line per Frame in `Trace(e)`, via `Frame.String()`; the whole `trace:` section is omitted if empty
 - Indentation is 2 spaces; trace entries are indented 4 spaces
@@ -577,11 +589,13 @@ func FromError(err error, opts ...FromOption) *errtrail.Error
 func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error
 
 // RetryDelay returns the delay carried by the first errdetails.RetryInfo
-// detail on err's gRPC status, reporting whether one was found. (0, false)
-// for nil, non-status errors, and statuses without the detail. A hint, like
-// IsRetryable — replay safety stays with the caller. FromError deliberately
-// does not turn received details back into public data on the returned
-// error.
+// detail on err's gRPC status that holds a POSITIVE delay, reporting
+// whether one was found. (0, false) for nil, non-status errors, statuses
+// without the detail, and RetryInfo whose delay is unset, zero, or negative
+// ("retry after zero" carries no recommendation; a later RetryInfo with a
+// positive delay still wins). A hint, like IsRetryable — replay safety
+// stays with the caller. FromError deliberately does not turn received
+// details back into public data on the returned error.
 func RetryDelay(err error) (time.Duration, bool)
 ```
 
@@ -641,10 +655,10 @@ Design decisions:
 | `CodeOf(nil)` | `OK` |
 | `CodeOf(fmt.Errorf("x"))` (no `*Error` present) | `Unknown` |
 | A chain built entirely with `Wrap` and no code set anywhere | Delegates to the innermost `*Error`'s code; `Unknown` if none has one |
-| `PublicMessage` when public is unset | Falls back to `http.StatusText(HTTPStatus)`. Never falls back to the internal msg |
+| `PublicMessage` when public is unset | Two-level fallback: `http.StatusText(HTTPStatus)`, then the code name when StatusText is empty. Never falls back to the internal msg, never returns `""` for a non-nil err |
 | `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
 | Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage`, the gRPC message, and the problem Title all fall back to the code name (`"CANCELED"`) — the library never hands `""` to a client |
-| `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
+| `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs`/`FieldViolations` collect every branch; `PublicFields` collects every branch but keeps the first branch's value for a duplicate key) |
 | `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields/violations; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. In a Join, a barrier inside one branch never blocks a sibling branch |
 | Field violations (`WithFieldViolation`) | A list, not a map: `FieldViolations` concatenates every layer and Join branch in walk order, nothing deduplicated. Client-visible (problem `"errors"` member, gRPC `BadRequest`), excluded from logs |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
