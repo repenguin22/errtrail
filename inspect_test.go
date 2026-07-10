@@ -219,6 +219,103 @@ func TestPublicFieldsNeverIncludesAttrs(t *testing.T) {
 	}
 }
 
+func TestWithoutPublicBlocksChainBelow(t *testing.T) {
+	// The motivating scenario: reclassifying NotFound -> PermissionDenied to
+	// hide existence must not leak the inner public message or fields
+	// through the 403.
+	inner := New(NotFound, "row missing").
+		WithPublic("User not found").
+		WithPublicField("user_id", "42")
+	outer := Wrap(inner, "reclassify lookup").WithCode(PermissionDenied).WithoutPublic()
+
+	if msg, ok := LookupPublicMessage(outer); ok || msg != "" {
+		t.Errorf("LookupPublicMessage = %q, %v; want \"\", false (blocked)", msg, ok)
+	}
+	// PublicMessage falls back to the new code's status text, not the inner message.
+	if got := PublicMessage(outer); got != "Forbidden" {
+		t.Errorf("PublicMessage = %q, want Forbidden", got)
+	}
+	if got := PublicFields(outer); got != nil {
+		t.Errorf("PublicFields = %v, want nil (blocked)", got)
+	}
+	if got := CodeOf(outer); got != PermissionDenied {
+		t.Errorf("CodeOf = %v, want PermissionDenied", got)
+	}
+}
+
+func TestWithoutPublicReAddOutside(t *testing.T) {
+	inner := New(NotFound, "x").WithPublic("inner msg").WithPublicField("k", "inner")
+
+	// Public data on the barrier node itself still applies — the barrier
+	// blocks only the chain below, so the order of WithoutPublic relative to
+	// WithPublic / WithPublicField on the same node makes no difference.
+	same := Wrap(inner, "y").WithoutPublic().WithPublic("outer msg").WithPublicField("k", "outer")
+	if got := PublicMessage(same); got != "outer msg" {
+		t.Errorf("PublicMessage = %q, want the barrier node's own message", got)
+	}
+	if got := PublicFields(same); got["k"] != "outer" {
+		t.Errorf(`fields["k"] = %v, want "outer"`, got["k"])
+	}
+	reversed := Wrap(inner, "y").WithPublic("outer msg").WithoutPublic()
+	if got := PublicMessage(reversed); got != "outer msg" {
+		t.Errorf("PublicMessage (reversed order) = %q, want the same result", got)
+	}
+
+	// An outer wrap above the barrier contributes as usual.
+	rewrapped := Wrap(Wrap(inner, "y").WithoutPublic(), "z").WithPublic("rewrapped").WithPublicField("k2", "v2")
+	if got := PublicMessage(rewrapped); got != "rewrapped" {
+		t.Errorf("PublicMessage = %q, want the outer wrap's message", got)
+	}
+	if got := PublicFields(rewrapped); len(got) != 1 || got["k2"] != "v2" {
+		t.Errorf("PublicFields = %v, want only the outer wrap's field", got)
+	}
+}
+
+func TestWithoutPublicInternalUnaffected(t *testing.T) {
+	inner := New(NotFound, "row missing").
+		WithPublic("User not found").
+		With(slog.String("query", "select 1"))
+	blocked := Wrap(inner, "reclassify").WithoutPublic()
+	plain := Wrap(inner, "reclassify")
+
+	if blocked.Error() != plain.Error() {
+		t.Errorf("Error() = %q, want %q (unchanged)", blocked.Error(), plain.Error())
+	}
+	if got, want := len(Trace(blocked)), len(Trace(plain)); got != want {
+		t.Errorf("len(Trace) = %d, want %d (unchanged)", got, want)
+	}
+	if got, want := attrKeys(blocked), attrKeys(plain); !equalStrs(got, want) {
+		t.Errorf("Attrs = %v, want %v (unchanged)", got, want)
+	}
+	if got := CodeOf(blocked); got != NotFound {
+		t.Errorf("CodeOf = %v, want NotFound (code still delegates through the barrier)", got)
+	}
+}
+
+func TestWithoutPublicJoinSiblingUnaffected(t *testing.T) {
+	// A barrier inside the first branch must not block the second branch —
+	// blocking is per subtree.
+	a := Wrap(New(InvalidArgument, "a").WithPublic("a public"), "barrier").WithoutPublic()
+	b := New(Internal, "b").WithPublic("b public").WithPublicField("from", "b")
+	joined := errors.Join(a, b)
+
+	if got := PublicMessage(joined); got != "b public" {
+		t.Errorf("PublicMessage = %q, want the sibling branch's message", got)
+	}
+	if got := PublicFields(joined); got["from"] != "b" {
+		t.Errorf("PublicFields = %v, want the sibling branch's field", got)
+	}
+
+	// A barrier above the Join blocks every branch.
+	all := Wrap(joined, "boundary").WithoutPublic()
+	if msg, ok := LookupPublicMessage(all); ok {
+		t.Errorf("LookupPublicMessage = %q, want blocked for all branches", msg)
+	}
+	if got := PublicFields(all); got != nil {
+		t.Errorf("PublicFields = %v, want nil", got)
+	}
+}
+
 // typedNilError returns a non-nil error interface holding a nil *Error — the
 // classic Go footgun, as produced by a function declared to return error that
 // returns a nil concrete pointer. Going through a function boundary keeps the

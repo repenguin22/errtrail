@@ -18,6 +18,12 @@ type Error struct {
 	pc     uintptr       // One recorded caller frame (resolved lazily). 0 means "none".
 	attrs  []slog.Attr   // Structured-logging attributes (internal, logs only).
 	fields []publicField // Public extension fields (client-visible).
+
+	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
+	// the cause chain below it contributes no public message and no public
+	// fields. This node's own public data — and anything added by an outer
+	// wrap — still applies; internal msg, attrs, and trace are unaffected.
+	noPublicBelow bool
 }
 
 // publicField is one client-visible key-value pair attached via
@@ -85,6 +91,36 @@ func (e *Error) WithPublic(msg string) *Error {
 	}
 	cp := *e
 	cp.public = msg
+	return &cp
+}
+
+// WithoutPublic returns a copy that acts as a public-data barrier: the cause
+// chain below this node contributes no public message and no public fields to
+// LookupPublicMessage, PublicMessage, PublicFields, or anything built on them
+// (problem responses, gRPC status messages). This node's own public data —
+// and anything added by an outer wrap — still applies, and the internal
+// message, attrs, and trace are unaffected. Does not record a new frame.
+//
+// Use it when reclassifying an error whose original public data must not
+// reach the client through the new response. For example, converting a
+// NotFound that carries a public "User not found" into a PermissionDenied
+// (to hide whether the resource exists) without WithoutPublic would leak
+// that message — and any public fields — through the 403:
+//
+//	return errtrail.Wrap(err, "reclassify lookup").
+//	    WithCode(errtrail.PermissionDenied).
+//	    WithoutPublic().
+//	    WithPublic("Forbidden") // optional: the new public message, set above the barrier
+//
+// The barrier blocks only the chain below the node, so chaining WithPublic /
+// WithPublicField before or after WithoutPublic on the same node makes no
+// difference — both operate on the node itself.
+func (e *Error) WithoutPublic() *Error {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	cp.noPublicBelow = true
 	return &cp
 }
 

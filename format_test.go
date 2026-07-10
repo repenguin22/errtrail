@@ -68,6 +68,27 @@ func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
 	mustContain(t, out, "\n  code: INTERNAL")
 }
 
+func TestFormatPlusVWithoutPublic(t *testing.T) {
+	inner := New(NotFound, "query user").WithPublic("User not found").
+		WithPublicField("resource", "user")
+	outer := Wrap(inner, "reclassify").WithCode(PermissionDenied).WithoutPublic().
+		With(slog.Int("user_id", 42))
+
+	out := fmt.Sprintf("%+v", outer)
+
+	// The public lines show what a client can actually see — nothing, here.
+	if strings.Contains(out, "public:") {
+		t.Errorf("blocked public message printed:\n%s", out)
+	}
+	if strings.Contains(out, "public.fields:") {
+		t.Errorf("blocked public fields printed:\n%s", out)
+	}
+	// Internal sections are unaffected by the barrier.
+	mustContain(t, out, "\n  code: PERMISSION_DENIED")
+	mustContain(t, out, "\n  attrs: user_id=42")
+	mustContain(t, out, "\n  trace:")
+}
+
 func mustContain(t *testing.T, s, sub string) {
 	t.Helper()
 	if !strings.Contains(s, sub) {

@@ -136,6 +136,22 @@ func TestImmutabilityPublicFieldsNoSharing(t *testing.T) {
 	}
 }
 
+func TestImmutabilityWithoutPublic(t *testing.T) {
+	inner := New(NotFound, "x").WithPublic("inner")
+	e := Wrap(inner, "y")
+	e2 := e.WithoutPublic()
+	if e.noPublicBelow {
+		t.Error("original barrier flag mutated")
+	}
+	if !e2.noPublicBelow {
+		t.Error("copy barrier flag not set")
+	}
+	// The original keeps exposing the inner public message.
+	if got := PublicMessage(e); got != "inner" {
+		t.Errorf("original PublicMessage = %q, want inner", got)
+	}
+}
+
 func TestNilReceiverSafety(t *testing.T) {
 	var e *Error
 	if e.WithCode(Internal) != nil {
@@ -143,6 +159,9 @@ func TestNilReceiverSafety(t *testing.T) {
 	}
 	if e.WithPublic("x") != nil {
 		t.Error("nil.WithPublic should be nil")
+	}
+	if e.WithoutPublic() != nil {
+		t.Error("nil.WithoutPublic should be nil")
 	}
 	if e.With(slog.Int("a", 1)) != nil {
 		t.Error("nil.With should be nil")

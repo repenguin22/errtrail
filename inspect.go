@@ -7,20 +7,41 @@ import (
 
 // walk visits every *Error in err's chain depth-first: itself, then
 // Unwrap(). For a branching chain like errors.Join (Unwrap() []error), the
-// first branch is visited first. Stops as soon as fn returns false (and
-// returns false itself).
+// first branch is visited first. Stops as soon as fn returns false.
+//
+// fn's blocked argument reports whether the node sits below a WithoutPublic
+// barrier: its public message and fields must not be exposed. Only the
+// public-data collectors consult it — code, trace, and attrs ignore it.
+// Blocking is per subtree, so a barrier in one Join branch never blocks a
+// sibling branch (which is also why a blocked walker must keep walking
+// rather than stop: a later branch may still contribute).
 //
 // Cyclic chains are not detected — as with the standard errors package,
 // that's the caller's responsibility to avoid.
-func walk(err error, fn func(*Error) bool) bool {
+func walk(err error, fn func(e *Error, blocked bool) bool) {
+	walkFrom(err, false, fn)
+}
+
+// walkFrom is walk with an inherited blocked state, threaded through Join
+// recursion so each branch keeps its own copy (a variable shared across
+// branches would leak a barrier from one branch into its siblings). The
+// bool result exists for the recursion itself: false propagates "fn asked
+// to stop" out of nested branches.
+func walkFrom(err error, blocked bool, fn func(*Error, bool) bool) bool {
 	for err != nil {
 		// Guard against a typed-nil *Error stored in a non-nil error
 		// interface (the classic Go footgun): fn dereferences the *Error, so
 		// a nil one would panic. Skipping it is safe — its Unwrap returns nil,
 		// which ends the walk below.
 		if e, ok := err.(*Error); ok && e != nil {
-			if !fn(e) {
+			if !fn(e, blocked) {
 				return false
+			}
+			// The barrier takes effect below the node: the node's own public
+			// data still counts (WithoutPublic().WithPublic(...) works), the
+			// chain underneath is blocked.
+			if e.noPublicBelow {
+				blocked = true
 			}
 		}
 		switch x := err.(type) {
@@ -28,7 +49,7 @@ func walk(err error, fn func(*Error) bool) bool {
 			err = x.Unwrap()
 		case interface{ Unwrap() []error }:
 			for _, sub := range x.Unwrap() {
-				if !walk(sub, fn) {
+				if !walkFrom(sub, blocked, fn) {
 					return false
 				}
 			}
@@ -48,7 +69,7 @@ func CodeOf(err error) Code {
 		return OK
 	}
 	found := Unknown
-	walk(err, func(e *Error) bool {
+	walk(err, func(e *Error, _ bool) bool {
 		if e.code != OK {
 			found = e.code
 			return false
@@ -72,11 +93,12 @@ func IsRetryable(err error) bool {
 // never falls back to anything — use it when the caller wants its own
 // fallback policy (grpcerr falls back to the code name; an i18n layer might
 // pick a translation). PublicMessage is this plus an http.StatusText
-// fallback.
+// fallback. Public messages below a WithoutPublic barrier are not
+// considered.
 func LookupPublicMessage(err error) (string, bool) {
 	msg := ""
-	walk(err, func(e *Error) bool {
-		if e.public != "" {
+	walk(err, func(e *Error, blocked bool) bool {
+		if !blocked && e.public != "" {
 			msg = e.public
 			return false
 		}
@@ -107,11 +129,15 @@ func PublicMessage(err error) string {
 // PublicFields walks err's chain from the outside in and collects the
 // public fields attached via WithPublicField into a map. For a duplicate
 // key, the outermost value wins (consistent with CodeOf and PublicMessage:
-// layers closer to the boundary override). Returns nil if no fields are
-// found. Never includes attrs or internal messages.
+// layers closer to the boundary override). Fields below a WithoutPublic
+// barrier are not collected. Returns nil if no fields are found. Never
+// includes attrs or internal messages.
 func PublicFields(err error) map[string]any {
 	var m map[string]any
-	walk(err, func(e *Error) bool {
+	walk(err, func(e *Error, blocked bool) bool {
+		if blocked {
+			return true
+		}
 		for _, f := range e.fields {
 			if m == nil {
 				m = make(map[string]any)
@@ -130,7 +156,7 @@ func PublicFields(err error) map[string]any {
 // originated). Returns nil if no *Error is found.
 func Trace(err error) []Frame {
 	var frames []Frame
-	walk(err, func(e *Error) bool {
+	walk(err, func(e *Error, _ bool) bool {
 		frames = append(frames, resolveFrame(e.pc, e.msg))
 		return true
 	})
@@ -142,7 +168,7 @@ func Trace(err error) []Frame {
 // slog's own behavior). Returns nil if no *Error is found.
 func Attrs(err error) []slog.Attr {
 	var attrs []slog.Attr
-	walk(err, func(e *Error) bool {
+	walk(err, func(e *Error, _ bool) bool {
 		attrs = append(attrs, e.attrs...)
 		return true
 	})
@@ -161,24 +187,28 @@ type collected struct {
 
 // collect walks err's chain once, gathering the resolved code, the first
 // public message, the full trace, all attrs, and all public fields. The code
-// and public results match CodeOf and the "no fallback" public lookup; trace
-// and attrs match Trace and Attrs. fields keeps duplicates in walk order —
-// display-only, unlike PublicFields' outermost-wins map. It exists so the
-// formatter and logger don't walk the chain several times over.
+// and public results match CodeOf and the "no fallback" public lookup —
+// including the WithoutPublic barrier, so the %+v / LogValue public lines
+// show what a client can actually see; trace and attrs match Trace and Attrs
+// (never blocked). fields keeps duplicates in walk order — display-only,
+// unlike PublicFields' outermost-wins map. It exists so the formatter and
+// logger don't walk the chain several times over.
 func collect(err error) collected {
 	c := collected{code: Unknown}
 	haveCode := false
-	walk(err, func(e *Error) bool {
+	walk(err, func(e *Error, blocked bool) bool {
 		if !haveCode && e.code != OK {
 			c.code = e.code
 			haveCode = true
 		}
-		if c.public == "" && e.public != "" {
-			c.public = e.public
+		if !blocked {
+			if c.public == "" && e.public != "" {
+				c.public = e.public
+			}
+			c.fields = append(c.fields, e.fields...)
 		}
 		c.trace = append(c.trace, resolveFrame(e.pc, e.msg))
 		c.attrs = append(c.attrs, e.attrs...)
-		c.fields = append(c.fields, e.fields...)
 		return true
 	})
 	return c

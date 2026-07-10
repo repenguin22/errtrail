@@ -58,6 +58,27 @@ func TestFromNeverLeaksInternal(t *testing.T) {
 	}
 }
 
+func TestFromWithoutPublicBarrier(t *testing.T) {
+	// Reclassifying with WithoutPublic: the inner public message and fields
+	// must not surface in the problem response.
+	inner := errtrail.New(errtrail.NotFound, "row missing").
+		WithPublic("User not found").
+		WithPublicField("user_id", "42")
+	err := errtrail.Wrap(inner, "reclassify").
+		WithCode(errtrail.PermissionDenied).WithoutPublic()
+
+	p := From(err)
+	if p.Status != 403 {
+		t.Errorf("Status = %d, want 403", p.Status)
+	}
+	if p.Detail != "" {
+		t.Errorf("Detail = %q, want empty (blocked)", p.Detail)
+	}
+	if p.Extensions != nil {
+		t.Errorf("Extensions = %v, want nil (blocked)", p.Extensions)
+	}
+}
+
 func TestTypeURLHook(t *testing.T) {
 	TypeURL = func(c errtrail.Code) string {
 		return "https://errors.example.com/" + c.String()
