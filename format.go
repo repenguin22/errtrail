@@ -63,6 +63,17 @@ func (e *Error) detailed() string {
 		}
 	}
 
+	// Client-visible field violations, matching what FieldViolations returns.
+	if len(c.violations) > 0 {
+		b.WriteString("\n  public.violations:")
+		for _, v := range c.violations {
+			b.WriteByte(' ')
+			b.WriteString(v.Field)
+			b.WriteByte('=')
+			b.WriteString(v.Description)
+		}
+	}
+
 	if len(c.attrs) > 0 {
 		b.WriteString("\n  attrs:")
 		for _, a := range c.attrs {

@@ -165,6 +165,23 @@ func PublicFields(err error) map[string]any {
 	return m
 }
 
+// FieldViolations walks err's chain from the outside in and concatenates
+// every violation attached via WithFieldViolation, in walk order (outermost
+// first; Join branches depth-first). Unlike PublicFields it is a list, not a
+// map — nothing is deduplicated or overridden; several layers (or Join
+// branches) each contribute their own violations. Violations below a
+// WithoutPublic barrier are not collected. Returns nil if none are found.
+func FieldViolations(err error) []FieldViolation {
+	var vs []FieldViolation
+	walk(err, func(e *Error, blocked bool) bool {
+		if !blocked {
+			vs = append(vs, e.violations...)
+		}
+		return true
+	})
+	return vs
+}
+
 // Trace returns the frames of every *Error in err's chain, ordered from the
 // outermost (where it was last wrapped) to the innermost (where it
 // originated). Returns nil if no *Error is found.
@@ -192,11 +209,12 @@ func Attrs(err error) []slog.Attr {
 // collected holds everything the %+v formatter and the slog LogValuer need,
 // gathered in a single pass instead of one walk per field.
 type collected struct {
-	code   Code          // resolved code, or Unknown if none is set
-	public string        // first explicitly-set public message, "" if none
-	trace  []Frame       // every frame, outermost to innermost
-	attrs  []slog.Attr   // every attr, outermost to innermost
-	fields []publicField // every public field, outermost to innermost (duplicates kept)
+	code       Code             // resolved code, or Unknown if none is set
+	public     string           // first explicitly-set public message, "" if none
+	trace      []Frame          // every frame, outermost to innermost
+	attrs      []slog.Attr      // every attr, outermost to innermost
+	fields     []publicField    // every public field, outermost to innermost (duplicates kept)
+	violations []FieldViolation // every violation, outermost to innermost (matches FieldViolations)
 }
 
 // collect walks err's chain once, gathering the resolved code, the first
@@ -220,6 +238,7 @@ func collect(err error) collected {
 				c.public = e.public
 			}
 			c.fields = append(c.fields, e.fields...)
+			c.violations = append(c.violations, e.violations...)
 		}
 		c.trace = append(c.trace, resolveFrame(e.pc, e.msg))
 		c.attrs = append(c.attrs, e.attrs...)

@@ -11,13 +11,14 @@ import (
 // copies, so a single *Error can be safely shared and derived from across
 // goroutines.
 type Error struct {
-	code   Code          // Zero value OK means "unset"; CodeOf delegates to the inner Error.
-	msg    string        // Internal message (for logs). Never shown to a client.
-	public string        // Public message shown to clients. Empty means unset.
-	cause  error         // The wrapped error. May be nil.
-	pc     uintptr       // One recorded caller frame (resolved lazily). 0 means "none".
-	attrs  []slog.Attr   // Structured-logging attributes (internal, logs only).
-	fields []publicField // Public extension fields (client-visible).
+	code       Code             // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+	msg        string           // Internal message (for logs). Never shown to a client.
+	public     string           // Public message shown to clients. Empty means unset.
+	cause      error            // The wrapped error. May be nil.
+	pc         uintptr          // One recorded caller frame (resolved lazily). 0 means "none".
+	attrs      []slog.Attr      // Structured-logging attributes (internal, logs only).
+	fields     []publicField    // Public extension fields (client-visible).
+	violations []FieldViolation // Field-level validation violations (client-visible).
 
 	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
 	// the cause chain below it contributes no public message and no public
@@ -31,6 +32,16 @@ type Error struct {
 type publicField struct {
 	key   string
 	value any
+}
+
+// FieldViolation is one client-visible, field-level validation violation
+// attached via WithFieldViolation and collected by FieldViolations. The
+// json tags give it the {"field", "description"} shape when problem.From
+// emits violations as the "errors" extension member; grpcerr.ToStatus maps
+// it onto errdetails.BadRequest_FieldViolation.
+type FieldViolation struct {
+	Field       string `json:"field"`       // request field, e.g. "email" or "profile.age"
+	Description string `json:"description"` // why it was rejected, safe to show a client
 }
 
 // New creates a new error, recording one caller frame.
@@ -164,6 +175,32 @@ func (e *Error) WithPublicField(key string, value any) *Error {
 	cp := *e
 	// Clip before appending so the copy never shares a backing array with e.fields.
 	cp.fields = append(slices.Clip(e.fields), publicField{key: key, value: value})
+	return &cp
+}
+
+// WithFieldViolation returns a copy with a field-level validation violation
+// appended. Does not record a new frame.
+//
+// Violations are client-visible, like the public message and public fields:
+// problem.From emits them as the "errors" extension member and
+// grpcerr.ToStatus attaches them as an errdetails.BadRequest. Never put
+// internal data in one. They are excluded from LogValue and blocked below a
+// WithoutPublic barrier.
+//
+// Example:
+//
+//	errtrail.New(errtrail.InvalidArgument, "validation failed").
+//	    WithPublic("Validation failed").
+//	    WithFieldViolation("email", "must be a valid email address").
+//	    WithFieldViolation("age", "must be at least 0")
+func (e *Error) WithFieldViolation(field, description string) *Error {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	// Clip before appending so the copy never shares a backing array with
+	// e.violations.
+	cp.violations = append(slices.Clip(e.violations), FieldViolation{Field: field, Description: description})
 	return &cp
 }
 

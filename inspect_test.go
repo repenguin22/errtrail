@@ -256,6 +256,64 @@ func TestPublicFieldsNone(t *testing.T) {
 	}
 }
 
+func TestFieldViolationsThroughChain(t *testing.T) {
+	inner := New(InvalidArgument, "bad request").
+		WithFieldViolation("email", "must be valid").
+		WithFieldViolation("age", "must be >= 0")
+	mid := fmt.Errorf("validate: %w", inner) // survives a std fmt layer
+	outer := Wrap(mid, "create user").WithFieldViolation("request", "malformed")
+
+	got := FieldViolations(outer)
+	// A list in walk order (outermost first), nothing deduplicated.
+	want := []FieldViolation{
+		{Field: "request", Description: "malformed"},
+		{Field: "email", Description: "must be valid"},
+		{Field: "age", Description: "must be >= 0"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("violations = %v, want %d entries", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violations[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFieldViolationsJoin(t *testing.T) {
+	a := New(InvalidArgument, "a").WithFieldViolation("email", "invalid")
+	b := New(InvalidArgument, "b").WithFieldViolation("age", "negative")
+	got := FieldViolations(errors.Join(a, b))
+	if len(got) != 2 || got[0].Field != "email" || got[1].Field != "age" {
+		t.Errorf("violations = %v, want both branches in branch order", got)
+	}
+}
+
+func TestFieldViolationsBarrier(t *testing.T) {
+	inner := New(InvalidArgument, "x").WithFieldViolation("email", "invalid")
+	blocked := Wrap(inner, "reclassify").WithoutPublic()
+	if got := FieldViolations(blocked); got != nil {
+		t.Errorf("violations = %v, want nil below a barrier", got)
+	}
+	// The barrier node's own violations — and outer re-adds — still apply.
+	readd := blocked.WithFieldViolation("request", "rejected")
+	if got := FieldViolations(readd); len(got) != 1 || got[0].Field != "request" {
+		t.Errorf("violations = %v, want only the barrier node's own", got)
+	}
+}
+
+func TestFieldViolationsNone(t *testing.T) {
+	if FieldViolations(nil) != nil {
+		t.Error("FieldViolations(nil) should be nil")
+	}
+	if FieldViolations(errors.New("plain")) != nil {
+		t.Error("FieldViolations(plain) should be nil")
+	}
+	if FieldViolations(New(Internal, "no violations")) != nil {
+		t.Error("FieldViolations(no violations) should be nil")
+	}
+}
+
 func TestPublicFieldsNeverIncludesAttrs(t *testing.T) {
 	e := New(Internal, "x").With(slog.String("secret", "hunter2"))
 	if got := PublicFields(e); got != nil {

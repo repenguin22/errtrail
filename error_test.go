@@ -152,10 +152,30 @@ func TestImmutabilityWithoutPublic(t *testing.T) {
 	}
 }
 
+func TestImmutabilityFieldViolationsNoSharing(t *testing.T) {
+	e := New(InvalidArgument, "x").WithFieldViolation("a", "1")
+	// Derive two errors from e; appending to one must not leak into the other.
+	b := e.WithFieldViolation("b", "2")
+	c := e.WithFieldViolation("c", "3")
+
+	if got := FieldViolations(e); len(got) != 1 {
+		t.Errorf("e violations = %v, want 1 entry", got)
+	}
+	if got := FieldViolations(b); len(got) != 2 || got[1].Field != "b" {
+		t.Errorf("b violations = %v", got)
+	}
+	if got := FieldViolations(c); len(got) != 2 || got[1].Field != "c" {
+		t.Errorf("c violations = %v", got)
+	}
+}
+
 func TestNilReceiverSafety(t *testing.T) {
 	var e *Error
 	if e.WithCode(Internal) != nil {
 		t.Error("nil.WithCode should be nil")
+	}
+	if e.WithFieldViolation("a", "b") != nil {
+		t.Error("nil.WithFieldViolation should be nil")
 	}
 	if e.WithPublic("x") != nil {
 		t.Error("nil.WithPublic should be nil")

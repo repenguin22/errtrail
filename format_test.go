@@ -51,6 +51,20 @@ func TestFormatPlusV(t *testing.T) {
 	}
 }
 
+func TestFormatPlusVViolations(t *testing.T) {
+	e := New(InvalidArgument, "bad request").
+		WithFieldViolation("email", "must be valid").
+		WithFieldViolation("age", "must be >= 0")
+	out := fmt.Sprintf("%+v", e)
+	mustContain(t, out, "\n  public.violations: email=must be valid age=must be >= 0")
+
+	// Below a barrier the line disappears, matching FieldViolations.
+	blocked := Wrap(e, "reclassify").WithoutPublic()
+	if out := fmt.Sprintf("%+v", blocked); strings.Contains(out, "public.violations:") {
+		t.Errorf("blocked violations printed:\n%s", out)
+	}
+}
+
 func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
 	e := New(Internal, "boom") // no public, no fields, no attrs
 	out := fmt.Sprintf("%+v", e)
@@ -59,6 +73,9 @@ func TestFormatPlusVOmitsUnsetSections(t *testing.T) {
 	}
 	if strings.Contains(out, "public.fields:") {
 		t.Error("public.fields line should be omitted when empty")
+	}
+	if strings.Contains(out, "public.violations:") {
+		t.Error("public.violations line should be omitted when empty")
 	}
 	if strings.Contains(out, "attrs:") {
 		t.Error("attrs line should be omitted when empty")
