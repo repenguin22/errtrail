@@ -128,17 +128,22 @@ func PublicMessage(err error) string {
 
 // PublicFields walks err's chain from the outside in and collects the
 // public fields attached via WithPublicField into a map. For a duplicate
-// key, the outermost value wins (consistent with CodeOf and PublicMessage:
-// layers closer to the boundary override). Fields below a WithoutPublic
-// barrier are not collected. Returns nil if no fields are found. Never
-// includes attrs or internal messages.
+// key, the outermost *Error's value wins (consistent with CodeOf and
+// PublicMessage: layers closer to the boundary override); within one
+// *Error, the last WithPublicField wins (consistent with calling WithPublic
+// twice). Fields below a WithoutPublic barrier are not collected. Returns
+// nil if no fields are found. Never includes attrs or internal messages.
 func PublicFields(err error) map[string]any {
 	var m map[string]any
 	walk(err, func(e *Error, blocked bool) bool {
 		if blocked {
 			return true
 		}
-		for _, f := range e.fields {
+		// Reverse order, so the node's last-added field is seen first and
+		// wins the first-seen map guard below (last-write-wins within a
+		// node); nodes further out were visited earlier and still override.
+		for i := len(e.fields) - 1; i >= 0; i-- {
+			f := e.fields[i]
 			if m == nil {
 				m = make(map[string]any)
 			}

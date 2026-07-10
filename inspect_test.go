@@ -200,6 +200,34 @@ func TestPublicFieldsOutermostWins(t *testing.T) {
 	}
 }
 
+func TestPublicFieldsLastWinsWithinNode(t *testing.T) {
+	// Within one node the last WithPublicField wins — consistent with
+	// calling WithPublic twice, where the last message wins.
+	e := New(InvalidArgument, "x").
+		WithPublicField("k", "first").
+		WithPublicField("k", "second")
+	if got := PublicFields(e); got["k"] != "second" {
+		t.Errorf(`fields["k"] = %v, want "second" (last write wins)`, got["k"])
+	}
+
+	// Across nodes the outermost still overrides the inner node's last write.
+	outer := Wrap(e, "y").WithPublicField("k", "outer")
+	if got := PublicFields(outer); got["k"] != "outer" {
+		t.Errorf(`fields["k"] = %v, want "outer" (outermost wins across nodes)`, got["k"])
+	}
+}
+
+func TestPublicFieldsJoinFirstBranchWins(t *testing.T) {
+	// Across Join branches, the first branch keeps the key (depth-first
+	// walk order, same as CodeOf / PublicMessage).
+	a := New(InvalidArgument, "a").WithPublicField("field", "email")
+	b := New(InvalidArgument, "b").WithPublicField("field", "age")
+	joined := errors.Join(a, b)
+	if got := PublicFields(joined); got["field"] != "email" {
+		t.Errorf(`fields["field"] = %v, want the first branch's "email"`, got["field"])
+	}
+}
+
 func TestPublicFieldsNone(t *testing.T) {
 	if PublicFields(nil) != nil {
 		t.Error("PublicFields(nil) should be nil")
