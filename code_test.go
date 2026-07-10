@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestBuiltinCodeMapping(t *testing.T) {
@@ -92,6 +93,52 @@ func TestRegisterRetryableOption(t *testing.T) {
 
 	if !flaky.Retryable() {
 		t.Error("Retryable() = false, want true when registered with Retryable()")
+	}
+}
+
+func TestRetryAfterOption(t *testing.T) {
+	const backoff Code = 108
+	Register(backoff, "BACKOFF_DEP", 503, 14, RetryAfter(5*time.Second))
+	t.Cleanup(func() { unregister(backoff, "BACKOFF_DEP") })
+
+	// RetryAfter implies retryable — no separate Retryable() needed.
+	if !backoff.Retryable() {
+		t.Error("Retryable() = false, want true (implied by RetryAfter)")
+	}
+	if d, ok := backoff.RetryDelay(); !ok || d != 5*time.Second {
+		t.Errorf("RetryDelay() = %v, %v; want 5s, true", d, ok)
+	}
+}
+
+func TestRetryDelayUnset(t *testing.T) {
+	// Built-ins are retryable but carry no delay.
+	if d, ok := Unavailable.RetryDelay(); ok || d != 0 {
+		t.Errorf("Unavailable.RetryDelay() = %v, %v; want 0, false", d, ok)
+	}
+	// Unregistered codes report false.
+	if _, ok := Code(9999).RetryDelay(); ok {
+		t.Error("unregistered RetryDelay() ok = true, want false")
+	}
+	// A custom code registered without RetryAfter reports false, even with
+	// Retryable().
+	const plain Code = 109
+	Register(plain, "PLAIN_RETRYABLE", 503, 14, Retryable())
+	t.Cleanup(func() { unregister(plain, "PLAIN_RETRYABLE") })
+	if _, ok := plain.RetryDelay(); ok {
+		t.Error("RetryDelay() ok = true without RetryAfter, want false")
+	}
+}
+
+func TestRetryAfterPanicsOnNonPositiveDelay(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		t.Run(d.String(), func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("expected panic for RetryAfter(%v)", d)
+				}
+			}()
+			Register(Code(110), "BAD_DELAY", 503, 14, RetryAfter(d))
+		})
 	}
 }
 

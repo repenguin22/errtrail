@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Code classifies an error. Values 0–16 share the same meaning and numeric
@@ -92,6 +93,7 @@ type codeInfo struct {
 	httpStatus int
 	grpcCode   uint32
 	retryable  bool
+	retryDelay time.Duration // recommended retry delay; 0 means "none set"
 }
 
 // builtins seeds the first registry snapshot at init. It is never read
@@ -103,23 +105,23 @@ type codeInfo struct {
 // retry), Unavailable (the canonical transient failure). Canceled is not —
 // the caller gave up deliberately — and Unknown is conservatively not.
 var builtins = map[Code]codeInfo{
-	OK:                 {"OK", http.StatusOK, 0, false},
-	Canceled:           {"CANCELED", 499, 1, false},
-	Unknown:            {"UNKNOWN", http.StatusInternalServerError, 2, false},
-	InvalidArgument:    {"INVALID_ARGUMENT", http.StatusBadRequest, 3, false},
-	DeadlineExceeded:   {"DEADLINE_EXCEEDED", http.StatusGatewayTimeout, 4, true},
-	NotFound:           {"NOT_FOUND", http.StatusNotFound, 5, false},
-	AlreadyExists:      {"ALREADY_EXISTS", http.StatusConflict, 6, false},
-	PermissionDenied:   {"PERMISSION_DENIED", http.StatusForbidden, 7, false},
-	ResourceExhausted:  {"RESOURCE_EXHAUSTED", http.StatusTooManyRequests, 8, true},
-	FailedPrecondition: {"FAILED_PRECONDITION", http.StatusBadRequest, 9, false},
-	Aborted:            {"ABORTED", http.StatusConflict, 10, true},
-	OutOfRange:         {"OUT_OF_RANGE", http.StatusBadRequest, 11, false},
-	Unimplemented:      {"UNIMPLEMENTED", http.StatusNotImplemented, 12, false},
-	Internal:           {"INTERNAL", http.StatusInternalServerError, 13, false},
-	Unavailable:        {"UNAVAILABLE", http.StatusServiceUnavailable, 14, true},
-	DataLoss:           {"DATA_LOSS", http.StatusInternalServerError, 15, false},
-	Unauthenticated:    {"UNAUTHENTICATED", http.StatusUnauthorized, 16, false},
+	OK:                 {"OK", http.StatusOK, 0, false, 0},
+	Canceled:           {"CANCELED", 499, 1, false, 0},
+	Unknown:            {"UNKNOWN", http.StatusInternalServerError, 2, false, 0},
+	InvalidArgument:    {"INVALID_ARGUMENT", http.StatusBadRequest, 3, false, 0},
+	DeadlineExceeded:   {"DEADLINE_EXCEEDED", http.StatusGatewayTimeout, 4, true, 0},
+	NotFound:           {"NOT_FOUND", http.StatusNotFound, 5, false, 0},
+	AlreadyExists:      {"ALREADY_EXISTS", http.StatusConflict, 6, false, 0},
+	PermissionDenied:   {"PERMISSION_DENIED", http.StatusForbidden, 7, false, 0},
+	ResourceExhausted:  {"RESOURCE_EXHAUSTED", http.StatusTooManyRequests, 8, true, 0},
+	FailedPrecondition: {"FAILED_PRECONDITION", http.StatusBadRequest, 9, false, 0},
+	Aborted:            {"ABORTED", http.StatusConflict, 10, true, 0},
+	OutOfRange:         {"OUT_OF_RANGE", http.StatusBadRequest, 11, false, 0},
+	Unimplemented:      {"UNIMPLEMENTED", http.StatusNotImplemented, 12, false, 0},
+	Internal:           {"INTERNAL", http.StatusInternalServerError, 13, false, 0},
+	Unavailable:        {"UNAVAILABLE", http.StatusServiceUnavailable, 14, true, 0},
+	DataLoss:           {"DATA_LOSS", http.StatusInternalServerError, 15, false, 0},
+	Unauthenticated:    {"UNAUTHENTICATED", http.StatusUnauthorized, 16, false, 0},
 }
 
 // RegisterOption customizes a code being registered.
@@ -131,6 +133,25 @@ type RegisterOption func(*codeInfo)
 // see IsRetryable for what it does not promise.
 func Retryable() RegisterOption {
 	return func(info *codeInfo) { info.retryable = true }
+}
+
+// RetryAfter returns a RegisterOption that records d as the code's
+// recommended retry delay, readable via (Code).RetryDelay. A delay is only
+// meaningful for a failure worth retrying, so RetryAfter also marks the code
+// retryable — no separate Retryable() needed. grpcerr.ToStatus attaches an
+// errdetails.RetryInfo carrying the delay for codes registered with it.
+//
+// Panics (during Register) if d is not positive. Like the retryable flag,
+// the delay is a hint: honoring it — and replay safety in general — remains
+// the caller's responsibility.
+func RetryAfter(d time.Duration) RegisterOption {
+	return func(info *codeInfo) {
+		if d <= 0 {
+			panic("errtrail: RetryAfter requires a positive delay, got " + d.String())
+		}
+		info.retryable = true
+		info.retryDelay = d
+	}
 }
 
 // Register adds a custom code. It is safe to call at any time, including
@@ -256,4 +277,16 @@ func (c Code) Retryable() bool {
 		return info.retryable
 	}
 	return false
+}
+
+// RetryDelay returns the recommended retry delay registered via the
+// RetryAfter option, reporting whether one was set. Built-ins cannot carry a
+// delay (they are not registered through Register), so they — like
+// unregistered codes and custom codes registered without RetryAfter —
+// report false.
+func (c Code) RetryDelay() (time.Duration, bool) {
+	if info, ok := registryPtr.Load().codes[c]; ok && info.retryDelay > 0 {
+		return info.retryDelay, true
+	}
+	return 0, false
 }
