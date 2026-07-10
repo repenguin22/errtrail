@@ -1,9 +1,11 @@
 // Package problem converts errtrail errors into RFC 9457 (Problem Details
 // for HTTP APIs) JSON responses. It never includes the internal message,
-// attrs, or trace — clients only ever see the explicitly-set public message
-// (errtrail.LookupPublicMessage, emitted as the detail member; the title
-// carries the generic status wording) and the public fields
-// (errtrail.PublicFields, emitted as extension members).
+// attrs, or trace — clients only ever see the three explicitly-set public
+// channels: the public message (errtrail.LookupPublicMessage, emitted as
+// the detail member; the title carries the generic status wording), the
+// public fields (errtrail.PublicFields, emitted as extension members), and
+// the field violations (errtrail.FieldViolations, emitted as the "errors"
+// extension member).
 package problem
 
 import (
@@ -92,7 +94,8 @@ var TypeURL func(errtrail.Code) string
 
 // From builds a Problem from err. It never includes internal information —
 // extension members come only from data explicitly marked public via
-// errtrail's WithPublicField, never from attrs or internal messages.
+// errtrail's WithPublicField or WithFieldViolation, never from attrs or
+// internal messages.
 //
 //	Status     = errtrail.CodeOf(err).HTTPStatus()
 //	Title      = http.StatusText(Status), or the code name when http.StatusText

@@ -228,9 +228,10 @@ b := errtrail.New(errtrail.InvalidArgument, "age invalid").WithFieldViolation("a
 joined := errors.Join(a, b)
 ```
 
-- **`CodeOf`** returns the first branch's **non-OK code** and **`PublicMessage`**
-  the first branch's **non-empty public message** — a single response can only
-  carry one status and one message, so the first hit wins by convention. Note
+- **`CodeOf`** returns the first **non-OK code** and **`PublicMessage`** the
+  first **non-empty public message**, each in depth-first walk order — a
+  single response can only carry one status and one message, so the first hit
+  wins by convention. Note
   these are separate walks: when the first branch has a code but no public
   message, the message may come from a *different* branch than the code. That
   combination is intentional (each walk finds the best available value), but if

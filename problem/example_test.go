@@ -9,18 +9,19 @@ import (
 )
 
 func ExampleWrite() {
-	// At the source: mark validation details public via WithPublicField —
-	// attrs (With) stay internal, public fields become extension members.
+	// At the source: attach validation details as typed field violations —
+	// they surface here as the "errors" extension member, and the same
+	// error yields an errdetails.BadRequest over gRPC (grpcerr.ToStatus).
+	// Attrs (With) stay internal; extra structured data can still go
+	// through WithPublicField under its own key.
 	err := errtrail.New(errtrail.InvalidArgument, "email failed regexp check").
 		WithPublic("Validation failed").
-		WithPublicField("errors", []map[string]string{
-			{"detail": "must be a valid email address", "pointer": "#/email"},
-		})
+		WithFieldViolation("email", "must be a valid email address")
 
 	// At the boundary: instance comes from the request, not the error.
 	rec := httptest.NewRecorder()
 	_ = problem.Write(rec, err, problem.Instance("/users"))
 	fmt.Println(rec.Body.String())
 	// Output:
-	// {"code":"INVALID_ARGUMENT","detail":"Validation failed","errors":[{"detail":"must be a valid email address","pointer":"#/email"}],"instance":"/users","status":400,"title":"Bad Request"}
+	// {"code":"INVALID_ARGUMENT","detail":"Validation failed","errors":[{"field":"email","description":"must be a valid email address"}],"instance":"/users","status":400,"title":"Bad Request"}
 }

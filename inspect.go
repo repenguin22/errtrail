@@ -10,8 +10,9 @@ import (
 // first branch is visited first. Stops as soon as fn returns false.
 //
 // fn's blocked argument reports whether the node sits below a WithoutPublic
-// barrier: its public message and fields must not be exposed. Only the
-// public-data collectors consult it — code, trace, and attrs ignore it.
+// barrier: its public message, fields, and violations must not be exposed.
+// Only the public-data collectors consult it — code, trace, and attrs
+// ignore it.
 // Blocking is per subtree, so a barrier in one Join branch never blocks a
 // sibling branch (which is also why a blocked walker must keep walking
 // rather than stop: a later branch may still contribute).

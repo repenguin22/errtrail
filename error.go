@@ -157,7 +157,9 @@ func (e *Error) With(attrs ...slog.Attr) *Error {
 		return nil
 	}
 	cp := *e
-	// Clip before appending so the copy never shares a backing array with e.attrs.
+	// Clip so the copy never shares appendable capacity with e.attrs — a
+	// later append on either side always reallocates instead of clobbering
+	// the other. (With no attrs to add, the same read-only array is kept.)
 	cp.attrs = append(slices.Clip(e.attrs), attrs...)
 	return &cp
 }
@@ -181,7 +183,7 @@ func (e *Error) WithPublicField(key string, value any) *Error {
 		return nil
 	}
 	cp := *e
-	// Clip before appending so the copy never shares a backing array with e.fields.
+	// Clip so the copy never shares appendable capacity with e.fields (see With).
 	cp.fields = append(slices.Clip(e.fields), publicField{key: key, value: value})
 	return &cp
 }
@@ -206,8 +208,8 @@ func (e *Error) WithFieldViolation(field, description string) *Error {
 		return nil
 	}
 	cp := *e
-	// Clip before appending so the copy never shares a backing array with
-	// e.violations.
+	// Clip so the copy never shares appendable capacity with e.violations
+	// (see With).
 	cp.violations = append(slices.Clip(e.violations), FieldViolation{Field: field, Description: description})
 	return &cp
 }

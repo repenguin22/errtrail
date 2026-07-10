@@ -17,6 +17,29 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.1.3] — 2026-07-11
+
+Documentation and tests only — no code change (external review on v1.1.2).
+
+- **Docs** The `problem` package comment and `From`'s opening line now name
+  all three client-visible channels (they still described the pre-v1.1
+  two-channel model), and **`ExampleWrite` teaches the v1.1 pattern**:
+  `WithFieldViolation` — which also feeds the gRPC `BadRequest` — instead of
+  the old `WithPublicField("errors", ...)` shape.
+- **Docs** Remaining v1.1 stragglers: the `Format` verb table lists
+  `public.violations`; the internal `walk` contract names violations;
+  DESIGN.md records the LogValue exclusion of violations, the explicit-nil
+  `"errors"` suppression, the measured construction cost, the full walker
+  user list, and a v1.1-current test plan; a README Join sentence now says
+  "first in depth-first walk order" instead of the ambiguous "first
+  branch's".
+- **Docs** The builders' `slices.Clip` comments describe the sharing
+  contract precisely: a zero-argument `With()` keeps the same read-only
+  backing array — Clip guarantees no shared *appendable capacity*, which is
+  what makes later appends safe, not array identity.
+- **Tests** The explicit-nil `"errors"` suppression is pinned by a
+  regression test (`"errors": null`, derived array suppressed).
+
 ### [v1.1.2] — 2026-07-11
 
 Documentation only — no code change (final pre-release review).
@@ -193,6 +216,24 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [grpcerr/v1.1.2] — 2026-07-11
+
+- **Fixed** `RetryDelay` rejects a `RetryInfo` whose delay is outside the
+  protobuf `Duration` range: `AsDuration` silently saturates such a value to
+  ±292 years, so a foreign service could make `RetryDelay` report a
+  quarter-millennium recommendation as `(d, true)` — a caller sleeping on it
+  would hang effectively forever. The delay is now `CheckValid`-gated before
+  the positive check; valid inputs are unaffected. errtrail's own
+  `RetryAfter` only registers in-range delays, so errtrail-to-errtrail
+  traffic was never affected.
+- **Tests** A standing adversarial no-leak test serializes the wire proto
+  (message + details) of the nastiest realistic chain — credentials in the
+  root cause, internal messages/attrs, a std `fmt` layer, a Join with a
+  `WithoutPublic` barrier in one branch — and asserts nothing internal
+  appears and the blocked branch's violations never become `BadRequest`
+  (previously covered only by transient review probes). Core requirement
+  unchanged (**v1.1.0**).
 
 ### [grpcerr/v1.1.1] — 2026-07-11
 

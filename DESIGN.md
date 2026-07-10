@@ -228,7 +228,7 @@ func Wrap(err error, msg string) *Error
 func Wrapf(err error, format string, args ...any) *Error
 ```
 
-Frame recording captures a single pc via a shared `caller()` helper — `runtime.Callers(3, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost down to tens of nanoseconds with minimal allocation.
+Frame recording captures a single pc via a shared `caller()` helper — `runtime.Callers(3, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost to roughly 200ns / 1 alloc (as of v1.1; see the README benchmarks).
 
 ### 4.2 Builder methods
 
@@ -365,7 +365,7 @@ func (f Frame) String() string
 
 ### 5.2 Shared chain-walking implementation
 
-`CodeOf` / `PublicMessage` / `Trace` / `Attrs` all share the same walk function:
+`CodeOf` / `LookupPublicMessage` / `PublicMessage` / `PublicFields` / `FieldViolations` / `Trace` / `Attrs` all share the same walk function:
 
 ```go
 // walk visits *Error values in err's chain depth-first (itself, then
@@ -435,7 +435,7 @@ Contents of the returned group:
 | `trace` | []string | `Frame.String()` for each element of `Trace(e)` |
 | (attrs) | — | `Attrs(e)`, spread directly into the group |
 
-`public` and the public fields (`WithPublicField`) are never included in logs (logs are for internal use; both are exclusively for response generation).
+`public`, the public fields (`WithPublicField`), and the field violations (`WithFieldViolation`) are never included in logs (logs are for internal use; all three are exclusively for response generation).
 
 Usage example:
 
@@ -497,7 +497,9 @@ func Instance(uri string) Option
 //   Extensions = errtrail.PublicFields(err), plus an "errors" member holding
 //                errtrail.FieldViolations(err) as [{"field","description"}]
 //                when the error carries violations (an explicit
-//                WithPublicField("errors", ...) wins — explicit beats derived)
+//                WithPublicField("errors", ...) wins — key presence decides,
+//                so even an explicit nil suppresses the derived member and
+//                serializes as "errors": null)
 // Never includes the internal message, attrs, or trace — extension members
 // come only from data explicitly marked public via WithPublicField /
 // WithFieldViolation.
@@ -669,13 +671,13 @@ Design decisions:
 
 ## 12. Test plan
 
-- **code_test.go**: table test covering all 17 built-in codes' mapping (HTTP/gRPC/String). Register's success and panic paths.
-- **error_test.go**: immutability of New/Wrap/builders (the original Error is never mutated, attrs slices are never shared). Every nil-safety case. `errors.Is/As/Unwrap` compatibility (including mixed chains with the standard `%w`).
-- **inspect_test.go**: covers every row of the edge-case table above. Walk order including `errors.Join`.
-- **format_test.go**: compares `%s` / `%v` / `%q` / `%+v` output against golden strings (file/line matched via regex).
-- **slog_test.go**: verifies actual JSON output via `slog.NewJSONHandler` plus a buffer.
-- **problem_test.go**: verifies Content-Type / status / body via `httptest.ResponseRecorder`. Omission when Detail==Title.
-- **grpcerr/grpcerr_test.go**: status conversion. gRPC mapping for a custom code.
+- **code_test.go**: table test covering all 17 built-in codes' mapping (HTTP/gRPC/String). Register's success, boundary, and panic paths — including the v1.1 `RetryAfter` option (retryable implication, `RetryDelay` accessor, non-positive panic).
+- **error_test.go**: immutability of New/Wrap/builders (the original Error is never mutated; attrs, fields, and violations slices never share appendable capacity). Every nil-safety case. `errors.Is/As/Unwrap` compatibility (including mixed chains with the standard `%w`).
+- **inspect_test.go**: covers every row of the edge-case table above. Walk order including `errors.Join`. `WithoutPublic` barrier placement (own node, fresh Wrap, Join positions) across all three public channels; `FieldViolations` concatenation.
+- **format_test.go**: compares `%s` / `%v` / `%q` / `%+v` output against golden strings (file/line matched via regex), including the `public.fields:` / `public.violations:` lines and their omission below a barrier.
+- **slog_test.go**: verifies actual JSON output via `slog.NewJSONHandler` plus a buffer; asserts the three public channels never appear in logs.
+- **problem_test.go**: verifies Content-Type / status / body via `httptest.ResponseRecorder`. Omission when Detail==Title. The derived `"errors"` member, the explicit-override rule (incl. nil), the barrier, and an adversarial serialized-body no-leak test.
+- **grpcerr/grpcerr_test.go + e2e_test.go**: status conversion; gRPC mapping for a custom code; ErrorInfo/RetryInfo/BadRequest attach conditions and order; `TrustedDomain`; `RetryDelay` (positive-only); barrier; a bufconn wire round-trip for all three details.
 - **Benchmarks** (bench_test.go): `New`, `Wrap`, building a 3-deep `Wrap` chain, `%+v` formatting. `New` targets roughly 1 alloc; `-benchmem` results are recorded in the README for regression detection.
 
 ## 13. Implementation order

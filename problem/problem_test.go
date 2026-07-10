@@ -195,6 +195,30 @@ func TestFromExplicitErrorsFieldWins(t *testing.T) {
 	}
 }
 
+func TestFromExplicitNilErrorsSuppressesDerived(t *testing.T) {
+	// Key presence decides, not the value: an explicit nil "errors" public
+	// field suppresses the derived member and serializes as "errors": null.
+	err := errtrail.New(errtrail.InvalidArgument, "x").
+		WithPublicField("errors", nil).
+		WithFieldViolation("email", "invalid")
+
+	body, mErr := json.Marshal(From(err))
+	if mErr != nil {
+		t.Fatalf("marshal: %v", mErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(body, &raw); e != nil {
+		t.Fatal(e)
+	}
+	v, present := raw["errors"]
+	if !present {
+		t.Fatalf(`"errors" key absent, want explicit null: %s`, body)
+	}
+	if v != nil {
+		t.Errorf(`errors = %v, want null (derived array suppressed)`, v)
+	}
+}
+
 func TestMarshalDropsReservedAndEmptyExtensionKeys(t *testing.T) {
 	err := errtrail.New(errtrail.InvalidArgument, "x").
 		WithPublicField("status", 999). // reserved — must not corrupt the real status

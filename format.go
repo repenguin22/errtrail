@@ -11,7 +11,8 @@ import (
 //
 //	%s, %v  same as e.Error()
 //	%q      quoted e.Error()
-//	%+v     multi-line form including code, public, public.fields, attrs, and trace
+//	%+v     multi-line form including code, public, public.fields,
+//	        public.violations, attrs, and trace
 func (e *Error) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
