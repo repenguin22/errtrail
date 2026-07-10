@@ -128,24 +128,32 @@ err := errtrail.New(errtrail.Internal, "db write failed").
     With(otelerr.TraceAttrs(ctx)...)
 ```
 
-For validation-style errors, attach structured **public fields** at the source
-with `WithPublicField`; they surface as RFC 9457 extension members. `instance`
+For validation-style errors, attach **field violations** at the source with
+`WithFieldViolation` — one typed channel that feeds both boundaries: the
+`problem` package emits them as the `errors` extension member, and
+`grpcerr.ToStatus` attaches them as an `errdetails.BadRequest`. `instance`
 comes from the request at the boundary, not from the error:
 
 ```go
 // At the source:
 err := errtrail.New(errtrail.InvalidArgument, "email failed regexp").
     WithPublic("Validation failed").
-    WithPublicField("errors", []map[string]string{
-        {"detail": "must be a valid email address", "pointer": "#/email"},
-    })
+    WithFieldViolation("email", "must be a valid email address")
 
-// At the boundary:
+// At the HTTP boundary:
 _ = problem.Write(w, err, problem.Instance(r.URL.Path))
 // {"code":"INVALID_ARGUMENT","detail":"Validation failed",
-//  "errors":[{"detail":"must be a valid email address","pointer":"#/email"}],
+//  "errors":[{"field":"email","description":"must be a valid email address"}],
 //  "instance":"/users","status":400,"title":"Bad Request"}
+
+// At the gRPC boundary the same error yields InvalidArgument with an
+// errdetails.BadRequest{FieldViolations: [{Field: "email", ...}]} detail.
 ```
+
+Arbitrary structured extras beyond field violations still go through
+`WithPublicField(key, value)`; they surface as RFC 9457 extension members
+under their own key (an explicit `"errors"` public field overrides the
+derived one).
 
 RFC 9457's `type` member (a URI reference identifying the problem type,
 defaulting to `about:blank`) is also supported, but opt-in: it's omitted by
@@ -179,6 +187,9 @@ res, err := client.GetUser(ctx, req)
 if err != nil {
     terr := grpcerr.FromError(err)  // wire status -> errtrail.Code; wraps err
     if errtrail.IsRetryable(terr) { // Unavailable/DeadlineExceeded/ResourceExhausted/Aborted
+        if d, ok := grpcerr.RetryDelay(err); ok { // server-recommended delay, if any
+            return retryAfter(ctx, op, d)
+        }
         return retryWithBackoff(ctx, op)
     }
     return nil, errtrail.Wrap(terr, "call user service")
@@ -356,6 +367,16 @@ func init() {
         errtrail.Retryable(),           // optional: makes IsRetryable report true
     )
 }
+```
+
+Instead of `Retryable()`, `RetryAfter(d)` marks the code retryable *and*
+records a recommended delay: `grpcerr.ToStatus` then attaches an
+`errdetails.RetryInfo` carrying it, and clients read it back with
+`grpcerr.RetryDelay(err)`. (Built-ins can't carry a delay — they aren't
+registered through `Register`.)
+
+```go
+errtrail.Register(Throttled, "THROTTLED", 429, 8, errtrail.RetryAfter(2*time.Second))
 ```
 
 Once registered, `RateLimited` behaves like a built-in everywhere: `HTTPStatus`,

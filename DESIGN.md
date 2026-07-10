@@ -108,6 +108,12 @@ func (c Code) GRPCCode() uint32
 // A transience hint only — see IsRetryable.
 func (c Code) Retryable() bool
 
+// RetryDelay returns the recommended retry delay registered via the
+// RetryAfter option, reporting whether one was set. Built-ins (not
+// registered through Register), unregistered codes, and custom codes
+// without RetryAfter report false.
+func (c Code) RetryDelay() (time.Duration, bool)
+
 // CodeByName returns the Code registered under name — built-ins included,
 // e.g. "NOT_FOUND". Reports false for names it does not know. Useful for
 // parsing code names from configuration or a wire format (grpcerr's
@@ -149,6 +155,13 @@ type RegisterOption func(*codeInfo)
 // (IsRetryable / (Code).Retryable report true). Not retryable by default.
 // A transience hint only — see IsRetryable.
 func Retryable() RegisterOption
+
+// RetryAfter returns a RegisterOption recording a recommended retry delay
+// (readable via (Code).RetryDelay; grpcerr.ToStatus attaches it as an
+// errdetails.RetryInfo). A delay is only meaningful for a failure worth
+// retrying, so it also implies the retryable flag. Panics during Register
+// on a non-positive delay.
+func RetryAfter(d time.Duration) RegisterOption
 
 // Register adds a custom code. Safe to call at any time, including
 // concurrently with lookups — the registry snapshot is replaced atomically
@@ -239,6 +252,14 @@ func (e *Error) With(attrs ...slog.Attr) *Error
 // Never put internal data in a public field. Like the public message,
 // they are excluded from LogValue.
 func (e *Error) WithPublicField(key string, value any) *Error
+
+// WithFieldViolation returns a copy with a FieldViolation{Field,
+// Description} appended — the typed channel for field-level validation
+// violations. Client-visible like the public message and fields: problem
+// emits them as the "errors" extension member, grpcerr as an
+// errdetails.BadRequest; excluded from LogValue, blocked below a
+// WithoutPublic barrier.
+func (e *Error) WithFieldViolation(field, description string) *Error
 ```
 
 Every builder method and every accessor below is **nil-receiver safe** (returns nil / a zero value when called on nil). This is specified because `Wrap` can return nil, and chained calls must not panic as a result.
@@ -312,6 +333,13 @@ func Attrs(err error) []slog.Attr
 // below a WithoutPublic barrier are not collected. Returns nil if none are
 // found. Never includes attrs or internal messages.
 func PublicFields(err error) map[string]any
+
+// FieldViolations concatenates every violation (WithFieldViolation) in
+// walk order (outermost first; Join branches depth-first). A list, not a
+// map — nothing is deduplicated or overridden; layers and Join branches
+// each contribute their own. Violations below a WithoutPublic barrier are
+// not collected. Returns nil if none are found.
+func FieldViolations(err error) []FieldViolation
 ```
 
 ### 5.1 Frame
@@ -454,9 +482,13 @@ func Instance(uri string) Option
 //                or empty if none is set or it equals Title (avoids redundancy)
 //   Code       = errtrail.CodeOf(err).String()
 //   Type       = TypeURL(CodeOf(err)) if TypeURL is set, otherwise empty
-//   Extensions = errtrail.PublicFields(err)
+//   Extensions = errtrail.PublicFields(err), plus an "errors" member holding
+//                errtrail.FieldViolations(err) as [{"field","description"}]
+//                when the error carries violations (an explicit
+//                WithPublicField("errors", ...) wins — explicit beats derived)
 // Never includes the internal message, attrs, or trace — extension members
-// come only from data explicitly marked public via WithPublicField.
+// come only from data explicitly marked public via WithPublicField /
+// WithFieldViolation.
 func From(err error, opts ...Option) Problem
 
 // TypeURL is an optional hook that derives a type URI from a Code.
@@ -511,9 +543,13 @@ var Domain string
 // errtrail code name (e.g. a custom "RATE_LIMITED") survives the wire even
 // though the numeric gRPC code may be shared. Attached only for registered
 // codes (CodeByName resolves) — an unregistered code's "CODE(123)" violates
-// the Reason spec and can't round-trip, so it ships plain. If details cannot
-// be attached (a proto marshal failure), the plain status is returned
-// instead; the status itself is never lost.
+// the Reason spec and can't round-trip, so it ships plain.
+// Independent of Domain, also attaches an errdetails.RetryInfo when the
+// code was registered with RetryAfter, and an errdetails.BadRequest built
+// from the error's field violations — fixed order ErrorInfo, RetryInfo,
+// BadRequest; errors without that data keep the plain wire format. If
+// details cannot be attached (a proto marshal failure), the plain status is
+// returned instead; the status itself is never lost.
 // Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 
@@ -539,9 +575,17 @@ func FromError(err error, opts ...FromOption) *errtrail.Error
 // FromStatus is FromError for a *status.Status you already hold.
 // Returns nil when st is nil or its code is OK.
 func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error
+
+// RetryDelay returns the delay carried by the first errdetails.RetryInfo
+// detail on err's gRPC status, reporting whether one was found. (0, false)
+// for nil, non-status errors, and statuses without the detail. A hint, like
+// IsRetryable — replay safety stays with the caller. FromError deliberately
+// does not turn received details back into public data on the returned
+// error.
+func RetryDelay(err error) (time.Duration, bool)
 ```
 
-Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support is tracked as a v1.1 candidate in ROADMAP §3 — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry (a new `RegisterOption` would be additive); BadRequest can be built on the core's public fields (`WithPublicField` / `PublicFields`), pending a deliberate field-violation convention.
+RetryInfo and BadRequest are attached automatically as of v1.1 (ROADMAP §3): the delay comes from the registry (`RetryAfter` RegisterOption, read via `(Code).RetryDelay`), the violations from the error (`WithFieldViolation` / `FieldViolations`). `ToStatus`/`ToError` deliberately gained no options — the configuration lives in the registry and on the error, and adding a variadic parameter post-v1.0 would be a breaking change. Callers needing other details still chain their own `WithDetails` before `.Err()`.
 
 Usage example:
 
@@ -601,7 +645,8 @@ Design decisions:
 | `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
 | Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage`, the gRPC message, and the problem Title all fall back to the code name (`"CANCELED"`) — the library never hands `""` to a client |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
-| `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. In a Join, a barrier inside one branch never blocks a sibling branch |
+| `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields/violations; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. In a Join, a barrier inside one branch never blocks a sibling branch |
+| Field violations (`WithFieldViolation`) | A list, not a map: `FieldViolations` concatenates every layer and Join branch in walk order, nothing deduplicated. Client-visible (problem `"errors"` member, gRPC `BadRequest`), excluded from logs |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |
 | `New(OK, ...)` | Not forbidden (can't be caught by vet), but documented as discouraged. Since `CodeOf` skips an Error whose code == OK, it effectively resolves to Unknown |
