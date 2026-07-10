@@ -4,10 +4,13 @@ Prioritized feature work toward production readiness / v1.0, split out of the
 2026-07-08 review. Each item is intended to be a separate, self-contained
 change (its own branch / PR).
 
+**v1.0 shipped 2026-07-11** (core v1.0.0, grpcerr/v1.0.0, otelerr/v1.0.0) —
+§1 and §2 below are kept as the record of how it got there; open work lives
+under [Post-v1.0 candidates](#post-v10-candidates).
+
 All P1 feature work from the original review has shipped (core v0.2.0–v0.4.0,
 grpcerr v0.2.0–v0.3.0), and the OpenTelemetry integration from the second
-review (2026-07-09) shipped as the `otelerr` submodule. What remains is
-hardening and ecosystem work.
+review (2026-07-09) shipped as the `otelerr` submodule.
 
 ## Hardening and ecosystem
 
@@ -124,6 +127,33 @@ Deliberately-not-doing notes kept for the record: a real-server HTTP E2E
 isn't ours) and any Docker/external-service E2E (non-hermetic tests would only
 make CI flaky; problem and otelerr already test against the real
 recorder/SDK).
+
+## Post-v1.0 candidates
+
+### 3. grpcerr: automatic RetryInfo / BadRequest details (v1.1 candidate)
+
+Today further gRPC details are deliberately the caller's job: `ToStatus`
+returns the `*status.Status`, so callers chain their own `WithDetails` before
+`.Err()` (documented in DESIGN.md §9). Candidate work to make the two common
+cases automatic — both purely additive (opt-in), so they fit a minor release
+under the SemVer promise:
+
+1. **RetryInfo** — attach `errdetails.RetryInfo` when the resolved code is
+   retryable. The registry carries the retryable flag (core v0.3.0) but not a
+   delay, which RetryInfo requires; needs a new `RegisterOption` (e.g.
+   `RetryAfter(time.Duration)`) — non-breaking, `Register` already takes
+   variadic options. Attach only when a delay is registered, so the default
+   wire format stays unchanged. Client side: a helper to read the received
+   delay could pair with it (`IsRetryable` itself stays code-derived).
+2. **BadRequest** — build `errdetails.BadRequest` field violations from
+   public fields. Open design question first: mapping generic key/value
+   public fields onto `{field, description}` violations is ambiguous, so this
+   needs a deliberate convention or a dedicated API (the README's validation
+   example — an `"errors"` field holding `{detail, pointer}` entries — is the
+   obvious starting shape) rather than guessing from arbitrary fields.
+   Design before code.
+
+Candidates only — not scheduled; adopt when a concrete use case shows up.
 
 ## Explicitly rejected (do not revisit without new evidence)
 

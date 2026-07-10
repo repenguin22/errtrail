@@ -541,7 +541,7 @@ func FromError(err error, opts ...FromOption) *errtrail.Error
 func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error
 ```
 
-Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry; BadRequest can be built on the core's public fields, `WithPublicField` / `PublicFields`).
+Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support is tracked as a v1.1 candidate in ROADMAP §3 — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry (a new `RegisterOption` would be additive); BadRequest can be built on the core's public fields (`WithPublicField` / `PublicFields`), pending a deliberate field-violation convention.
 
 Usage example:
 
