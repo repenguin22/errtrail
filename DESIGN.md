@@ -268,15 +268,13 @@ func IsRetryable(err error) bool
 // layer might pick a translation).
 func LookupPublicMessage(err error) (string, bool)
 
-// PublicMessage is LookupPublicMessage plus a fallback to
-// http.StatusText(CodeOf(err).HTTPStatus()) (e.g. NotFound -> "Not Found").
-// Never falls back to an internal message.
-//
-// Note: http.StatusText returns "" for status codes it does not know —
-// notably Canceled (499) and any custom code mapped to a non-standard HTTP
-// status — so PublicMessage returns "" for such a code with no explicit
-// public message. The gRPC and problem paths don't use this fallback and
-// are unaffected.
+// PublicMessage is LookupPublicMessage plus a two-level fallback:
+// http.StatusText(CodeOf(err).HTTPStatus()) (e.g. NotFound -> "Not Found"),
+// then — when http.StatusText does not know the status, notably Canceled's
+// 499 and custom codes on a non-standard HTTP status — the code name (e.g.
+// "CANCELED"), the same rule the problem title and the gRPC status message
+// use. Never returns "" for a non-nil err; never falls back to an internal
+// message.
 func PublicMessage(err error) string
 
 // Trace returns the frames of every *Error in the chain, ordered from the
@@ -578,7 +576,7 @@ Design decisions:
 | A chain built entirely with `Wrap` and no code set anywhere | Delegates to the innermost `*Error`'s code; `Unknown` if none has one |
 | `PublicMessage` when public is unset | Falls back to `http.StatusText(HTTPStatus)`. Never falls back to the internal msg |
 | `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
-| Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage` returns `""`; the gRPC message falls back to the code name instead (`"CANCELED"`), and the problem Title falls back to the code name too |
+| Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage`, the gRPC message, and the problem Title all fall back to the code name (`"CANCELED"`) — the library never hands `""` to a client |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |

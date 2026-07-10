@@ -92,9 +92,9 @@ func IsRetryable(err error) bool {
 // first explicitly-set public message, reporting whether one was found. It
 // never falls back to anything — use it when the caller wants its own
 // fallback policy (grpcerr falls back to the code name; an i18n layer might
-// pick a translation). PublicMessage is this plus an http.StatusText
-// fallback. Public messages below a WithoutPublic barrier are not
-// considered.
+// pick a translation). PublicMessage is this plus a two-level fallback
+// (http.StatusText, then the code name). Public messages below a
+// WithoutPublic barrier are not considered.
 func LookupPublicMessage(err error) (string, bool) {
 	msg := ""
 	walk(err, func(e *Error, blocked bool) bool {
@@ -109,13 +109,13 @@ func LookupPublicMessage(err error) (string, bool) {
 
 // PublicMessage walks err's chain from the outside in and returns the first
 // non-empty public message found. If none is set, it falls back to
-// http.StatusText(CodeOf(err).HTTPStatus()). It never falls back to an
-// internal message. Use LookupPublicMessage to apply a different fallback.
-//
-// http.StatusText returns "" for statuses it does not know — notably Canceled
-// (499) and custom codes mapped to a non-standard HTTP status — so for those
-// codes with no explicit public message this returns "". Set WithPublic on
-// such codes if a client-facing message is required.
+// http.StatusText(CodeOf(err).HTTPStatus()); when http.StatusText does not
+// know the status either — notably Canceled (499) and custom codes mapped to
+// a non-standard HTTP status — it falls back to the code name (e.g.
+// "CANCELED"), the same rule the problem title and the gRPC status message
+// use. It thus never returns "" for a non-nil err (PublicMessage(nil) is
+// still ""), and never falls back to an internal message. Use
+// LookupPublicMessage to apply a different fallback.
 func PublicMessage(err error) string {
 	if err == nil {
 		return ""
@@ -123,7 +123,11 @@ func PublicMessage(err error) string {
 	if msg, ok := LookupPublicMessage(err); ok {
 		return msg
 	}
-	return http.StatusText(CodeOf(err).HTTPStatus())
+	code := CodeOf(err)
+	if s := http.StatusText(code.HTTPStatus()); s != "" {
+		return s
+	}
+	return code.String()
 }
 
 // PublicFields walks err's chain from the outside in and collects the

@@ -89,6 +89,22 @@ func TestPublicMessageFallback(t *testing.T) {
 	}
 }
 
+func TestPublicMessageCodeNameFallback(t *testing.T) {
+	// http.StatusText knows nothing about Canceled's 499 — the second-level
+	// fallback hands the client the code name, never "".
+	if got := PublicMessage(New(Canceled, "ctx canceled")); got != "CANCELED" {
+		t.Errorf("PublicMessage(Canceled) = %q, want CANCELED", got)
+	}
+
+	// Same for a custom code on a non-standard (but in-range) HTTP status.
+	const odd Code = 140
+	Register(odd, "ODD_STATUS", 599, 13)
+	t.Cleanup(func() { unregister(odd, "ODD_STATUS") })
+	if got := PublicMessage(New(odd, "x")); got != "ODD_STATUS" {
+		t.Errorf("PublicMessage(custom 599) = %q, want ODD_STATUS", got)
+	}
+}
+
 func TestPublicMessageNeverLeaksInternal(t *testing.T) {
 	e := New(Internal, "db password = hunter2")
 	got := PublicMessage(e)
