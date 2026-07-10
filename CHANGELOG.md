@@ -17,6 +17,28 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.1.0] — 2026-07-11
+
+Additive only — no behavior changes for existing code (ROADMAP §3).
+
+- **Added** `RetryAfter(d time.Duration)` `RegisterOption` — records a
+  recommended retry delay on a custom code and implies the retryable flag (a
+  delay is only meaningful for a failure worth retrying). Read back via the
+  new **`(Code).RetryDelay() (time.Duration, bool)`**; built-ins,
+  unregistered codes, and codes registered without `RetryAfter` report false.
+  Panics during `Register` on a non-positive delay.
+- **Added** Field violations — a typed channel for validation errors:
+  **`FieldViolation{Field, Description}`**, attached via
+  **`(*Error).WithFieldViolation(field, description)`** and collected by
+  **`FieldViolations(err)`** as a list in walk order (outermost first, Join
+  branches depth-first; nothing deduplicated, unlike `PublicFields`).
+  Client-visible public data: blocked below a `WithoutPublic` barrier,
+  excluded from `LogValue`, shown by `%+v` on a `public.violations:` line.
+- **Added** `problem.From` emits field violations as the **`"errors"`
+  extension member** (`[{"field", "description"}, ...]`). An explicit
+  `WithPublicField("errors", ...)` wins over the derived member; without
+  violations the output is unchanged.
+
 ### [v1.0.0] — 2026-07-11
 
 - First stable release — identical in code to **v0.7.0**. From here on the
@@ -135,6 +157,23 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [grpcerr/v1.1.0] — 2026-07-11
+
+Additive only (ROADMAP §3). Requires core **v1.1.0**.
+
+- **Added** `ToStatus` / `ToError` attach up to three standard details, in
+  fixed order: the existing `ErrorInfo` (Domain opt-in), an
+  **`errdetails.RetryInfo`** carrying the delay of a code registered with
+  `errtrail.RetryAfter`, and an **`errdetails.BadRequest`** built from the
+  error's field violations (`errtrail.WithFieldViolation`). RetryInfo and
+  BadRequest are independent of `Domain` — registering a delay or attaching
+  violations is the opt-in; errors without that data keep the previous wire
+  format exactly. `ToStatus`/`ToError` deliberately gain no options: the
+  configuration lives in the registry and on the error.
+- **Added** `RetryDelay(err) (time.Duration, bool)` — reads the first
+  `RetryInfo` off a received status. `FromError` deliberately does not turn
+  received details back into public data on the returned error.
 
 ### [grpcerr/v1.0.0] — 2026-07-11
 

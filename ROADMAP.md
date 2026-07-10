@@ -130,7 +130,14 @@ recorder/SDK).
 
 ## Post-v1.0 candidates
 
-### 3. grpcerr: automatic RetryInfo / BadRequest details (v1.1 candidate)
+### 3. grpcerr: automatic RetryInfo / BadRequest details (v1.1) — SHIPPED
+
+Shipped as core **v1.1.0** and grpcerr **v1.1.0** (2026-07-11): the
+`RetryAfter` RegisterOption + `(Code).RetryDelay`, the typed field-violation
+channel (`WithFieldViolation` / `FieldViolations`, emitted by problem as the
+`"errors"` member), automatic `RetryInfo`/`BadRequest` attach in `ToStatus`,
+and the client-side `grpcerr.RetryDelay`. Original candidate notes kept below
+for the record.
 
 Today further gRPC details are deliberately the caller's job: `ToStatus`
 returns the `*status.Status`, so callers chain their own `WithDetails` before
