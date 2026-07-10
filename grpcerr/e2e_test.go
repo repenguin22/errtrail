@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -143,6 +145,53 @@ func TestE2ECustomCodeDegradesWithoutDomain(t *testing.T) {
 	got := FromError(callFail(conn))
 	if code := errtrail.CodeOf(got); code != errtrail.ResourceExhausted {
 		t.Errorf("CodeOf = %v, want ResourceExhausted (numeric-only wire)", code)
+	}
+}
+
+// E2E fixture for the v1.1 details: a custom code with a registered retry
+// delay, registered once so -count=2 doesn't panic.
+const e2eThrottled errtrail.Code = 141
+
+var registerE2EThrottledOnce sync.Once
+
+func registerE2EThrottled() {
+	registerE2EThrottledOnce.Do(func() {
+		errtrail.Register(e2eThrottled, "E2E_THROTTLED", 429, 8,
+			errtrail.RetryAfter(3*time.Second))
+	})
+}
+
+func TestE2EAllDetailsOverWire(t *testing.T) {
+	registerE2EThrottled()
+	setDomain(t, "errtrail.test")
+
+	conn := dialE2E(t, ToError(
+		errtrail.New(e2eThrottled, "bucket empty").
+			WithFieldViolation("query", "too broad")))
+
+	wireErr := callFail(conn)
+	st, ok := status.FromError(wireErr)
+	if !ok {
+		t.Fatal("not a status error")
+	}
+	// All three details survive the grpc-status-details-bin trailer:
+	// ErrorInfo, RetryInfo, BadRequest, in attach order.
+	details := st.Details()
+	if len(details) != 3 {
+		t.Fatalf("len(Details) = %d, want 3", len(details))
+	}
+	if code := errtrail.CodeOf(FromError(wireErr)); code != e2eThrottled {
+		t.Errorf("CodeOf = %v, want E2E_THROTTLED (ErrorInfo recovery)", code)
+	}
+	if d, ok := RetryDelay(wireErr); !ok || d != 3*time.Second {
+		t.Errorf("RetryDelay = %v, %v; want 3s, true", d, ok)
+	}
+	br, ok := details[2].(*errdetails.BadRequest)
+	if !ok {
+		t.Fatalf("details[2] = %T, want *errdetails.BadRequest", details[2])
+	}
+	if vs := br.GetFieldViolations(); len(vs) != 1 || vs[0].GetField() != "query" {
+		t.Errorf("FieldViolations = %v", br.GetFieldViolations())
 	}
 }
 

@@ -6,10 +6,13 @@ package grpcerr
 
 import (
 	"slices"
+	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/repenguin22/errtrail"
 )
@@ -37,13 +40,19 @@ var Domain string
 // gRPC code. The detail is attached only for registered codes (those
 // errtrail.CodeByName resolves): an unregistered code's "CODE(123)" form
 // violates the ErrorInfo.Reason spec and cannot round-trip anyway, so such
-// a status ships plain. If the details cannot be attached (a proto marshal
-// failure), the plain status is returned instead.
+// a status ships plain.
+//
+// Independent of Domain, two further details are attached when the error
+// carries the data for them: an errdetails.RetryInfo with the delay of a
+// code registered with errtrail.RetryAfter (readable on the client via
+// RetryDelay), and an errdetails.BadRequest built from the error's field
+// violations (errtrail.WithFieldViolation). Errors without that data keep
+// today's wire format exactly. If the details cannot be attached (a proto
+// marshal failure), the plain status is returned instead.
 //
 // Returns status.New(codes.OK, "") when err is nil. Never includes the
-// internal message, attrs, or trace. Callers who need further details
-// (RetryInfo, BadRequest, ...) can call WithDetails on the returned status
-// themselves.
+// internal message, attrs, or trace. Callers who need other details can
+// still call WithDetails on the returned status themselves.
 func ToStatus(err error) *status.Status {
 	if err == nil {
 		return status.New(codes.OK, "")
@@ -54,26 +63,49 @@ func ToStatus(err error) *status.Status {
 		msg = code.String()
 	}
 	st := status.New(codes.Code(code.GRPCCode()), msg)
-	if Domain == "" {
-		return st
+	if details := detailsFor(err, code); len(details) > 0 {
+		return withDetails(st, details)
 	}
-	if _, ok := errtrail.CodeByName(code.String()); !ok {
-		// Unregistered: "CODE(123)" violates the Reason spec and cannot
-		// round-trip anyway — attach nothing.
-		return st
-	}
-	return withErrorInfo(st, code)
+	return st
 }
 
-// withErrorInfo attaches an errdetails.ErrorInfo{Reason: code.String(),
-// Domain: Domain} to st. If the details cannot be attached (WithDetails
-// rejects OK statuses and surfaces proto marshal failures), the plain status
-// is returned instead — never lose the status itself over details.
-func withErrorInfo(st *status.Status, code errtrail.Code) *status.Status {
-	detailed, err := st.WithDetails(&errdetails.ErrorInfo{
-		Reason: code.String(),
-		Domain: Domain,
-	})
+// detailsFor collects the standard error details derived from err and its
+// resolved code: an ErrorInfo when Domain is set and the code is registered
+// (see ToStatus), a RetryInfo when the code was registered with RetryAfter,
+// and a BadRequest when the error carries field violations. The order is
+// fixed: ErrorInfo, RetryInfo, BadRequest.
+func detailsFor(err error, code errtrail.Code) []protoadapt.MessageV1 {
+	var details []protoadapt.MessageV1
+	if Domain != "" {
+		if _, ok := errtrail.CodeByName(code.String()); ok {
+			details = append(details, &errdetails.ErrorInfo{
+				Reason: code.String(),
+				Domain: Domain,
+			})
+		}
+	}
+	if d, ok := code.RetryDelay(); ok {
+		details = append(details, &errdetails.RetryInfo{RetryDelay: durationpb.New(d)})
+	}
+	if vs := errtrail.FieldViolations(err); len(vs) > 0 {
+		fv := make([]*errdetails.BadRequest_FieldViolation, len(vs))
+		for i, v := range vs {
+			fv[i] = &errdetails.BadRequest_FieldViolation{
+				Field:       v.Field,
+				Description: v.Description,
+			}
+		}
+		details = append(details, &errdetails.BadRequest{FieldViolations: fv})
+	}
+	return details
+}
+
+// withDetails attaches details to st. If they cannot be attached
+// (WithDetails rejects OK statuses and surfaces proto marshal failures),
+// the plain status is returned instead — never lose the status itself over
+// details.
+func withDetails(st *status.Status, details []protoadapt.MessageV1) *status.Status {
+	detailed, err := st.WithDetails(details...)
 	if err != nil {
 		return st
 	}
@@ -131,9 +163,12 @@ func TrustedDomain(domains ...string) FromOption {
 //
 // The wire message survives as the internal message via the wrapped cause;
 // it is NOT set as the public message (call WithPublic explicitly to
-// propagate it to your own clients). The recorded frame points inside
-// grpcerr — wrap the result with errtrail.Wrap at the call site to add a
-// caller frame.
+// propagate it to your own clients). For the same reason received details
+// are not turned back into public data on the returned error — a
+// downstream's BadRequest violations are its clients' business, not
+// automatically yours; read a RetryInfo delay with RetryDelay. The recorded
+// frame points inside grpcerr — wrap the result with errtrail.Wrap at the
+// call site to add a caller frame.
 func FromError(err error, opts ...FromOption) *errtrail.Error {
 	if err == nil {
 		return nil
@@ -157,6 +192,31 @@ func foldFromOptions(opts []FromOption) fromOptions {
 		opt(&o)
 	}
 	return o
+}
+
+// RetryDelay returns the retry delay carried by the first
+// errdetails.RetryInfo detail on err's gRPC status, reporting whether one
+// was found. It pairs with the server side registering a code with
+// errtrail.RetryAfter, but reads any RetryInfo regardless of origin.
+// Returns (0, false) for nil, non-status errors, and statuses without a
+// RetryInfo detail.
+//
+// Like IsRetryable (which stays derived from the Code alone), the delay is
+// a hint — honoring it, idempotency, and retry budgets remain the caller's
+// responsibility.
+func RetryDelay(err error) (time.Duration, bool) {
+	if err == nil {
+		return 0, false
+	}
+	// Non-status errors yield a detail-less Unknown status, so they fall
+	// through to (0, false).
+	st, _ := status.FromError(err)
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.RetryInfo); ok {
+			return info.GetRetryDelay().AsDuration(), true
+		}
+	}
+	return 0, false
 }
 
 // codeFromStatus maps a status to an errtrail Code: wire codes 0–16 map

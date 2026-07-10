@@ -4,10 +4,12 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 
 	"github.com/repenguin22/errtrail"
 )
@@ -382,18 +384,123 @@ func TestFromErrorPreservesCause(t *testing.T) {
 	}
 }
 
-func TestWithErrorInfoFallbackWhenRejected(t *testing.T) {
+func TestWithDetailsFallbackWhenRejected(t *testing.T) {
 	// The WithDetails-failure fallback is kept as defense against a proto
 	// marshal failure: the status itself must never be lost over details.
 	// Register no longer accepts a code mapped to gRPC OK, so trigger the
 	// rejection directly with an OK status (WithDetails always rejects OK).
-	setDomain(t, "errtrail.test")
-
-	st := withErrorInfo(status.New(codes.OK, ""), errtrail.NotFound)
+	st := withDetails(status.New(codes.OK, ""), []protoadapt.MessageV1{
+		&errdetails.ErrorInfo{Reason: "NOT_FOUND", Domain: "errtrail.test"},
+	})
 	if st.Code() != codes.OK {
 		t.Errorf("Code = %v, want OK (status preserved)", st.Code())
 	}
 	if n := len(st.Details()); n != 0 {
 		t.Errorf("len(Details) = %d, want 0 (attach must fail cleanly)", n)
+	}
+}
+
+const throttled errtrail.Code = 150
+
+var registerThrottledOnce sync.Once
+
+// registerThrottled registers the RetryAfter fixture exactly once.
+func registerThrottled() {
+	registerThrottledOnce.Do(func() {
+		errtrail.Register(throttled, "THROTTLED", 429, uint32(codes.ResourceExhausted),
+			errtrail.RetryAfter(2*time.Second))
+	})
+}
+
+func TestRetryInfoAttachedForRetryAfterCode(t *testing.T) {
+	registerThrottled()
+	// Domain deliberately unset: RetryInfo is independent of the ErrorInfo
+	// opt-in — registering a delay is the opt-in.
+	st := ToStatus(errtrail.New(throttled, "bucket empty"))
+	details := st.Details()
+	if len(details) != 1 {
+		t.Fatalf("len(Details) = %d, want 1 (RetryInfo only)", len(details))
+	}
+	info, ok := details[0].(*errdetails.RetryInfo)
+	if !ok {
+		t.Fatalf("details[0] = %T, want *errdetails.RetryInfo", details[0])
+	}
+	if got := info.GetRetryDelay().AsDuration(); got != 2*time.Second {
+		t.Errorf("RetryDelay = %v, want 2s", got)
+	}
+}
+
+func TestNoRetryInfoWithoutDelay(t *testing.T) {
+	registerRateLimited() // retryable-capable custom code, but no RetryAfter
+	if n := len(ToStatus(errtrail.New(rateLimited, "x")).Details()); n != 0 {
+		t.Errorf("len(Details) = %d, want 0 without a registered delay", n)
+	}
+	// Built-ins are retryable but cannot carry a delay.
+	if n := len(ToStatus(errtrail.New(errtrail.Unavailable, "x")).Details()); n != 0 {
+		t.Errorf("len(Details) = %d, want 0 for a built-in", n)
+	}
+}
+
+func TestBadRequestFromViolations(t *testing.T) {
+	err := errtrail.New(errtrail.InvalidArgument, "bad request").
+		WithFieldViolation("email", "must be a valid email address").
+		WithFieldViolation("age", "must be at least 0")
+	details := ToStatus(err).Details()
+	if len(details) != 1 {
+		t.Fatalf("len(Details) = %d, want 1 (BadRequest only)", len(details))
+	}
+	br, ok := details[0].(*errdetails.BadRequest)
+	if !ok {
+		t.Fatalf("details[0] = %T, want *errdetails.BadRequest", details[0])
+	}
+	vs := br.GetFieldViolations()
+	if len(vs) != 2 {
+		t.Fatalf("len(FieldViolations) = %d, want 2", len(vs))
+	}
+	if vs[0].GetField() != "email" || vs[0].GetDescription() != "must be a valid email address" {
+		t.Errorf("violations[0] = %v", vs[0])
+	}
+	if vs[1].GetField() != "age" {
+		t.Errorf("violations[1] = %v", vs[1])
+	}
+}
+
+func TestAllDetailsTogetherInOrder(t *testing.T) {
+	registerThrottled()
+	setDomain(t, "errtrail.test")
+
+	err := errtrail.New(throttled, "bucket empty").
+		WithFieldViolation("query", "too broad")
+	details := ToStatus(err).Details()
+	if len(details) != 3 {
+		t.Fatalf("len(Details) = %d, want 3", len(details))
+	}
+	if _, ok := details[0].(*errdetails.ErrorInfo); !ok {
+		t.Errorf("details[0] = %T, want ErrorInfo", details[0])
+	}
+	if _, ok := details[1].(*errdetails.RetryInfo); !ok {
+		t.Errorf("details[1] = %T, want RetryInfo", details[1])
+	}
+	if _, ok := details[2].(*errdetails.BadRequest); !ok {
+		t.Errorf("details[2] = %T, want BadRequest", details[2])
+	}
+}
+
+func TestRetryDelayHelper(t *testing.T) {
+	registerThrottled()
+
+	gerr := ToError(errtrail.New(throttled, "bucket empty"))
+	if d, ok := RetryDelay(gerr); !ok || d != 2*time.Second {
+		t.Errorf("RetryDelay = %v, %v; want 2s, true", d, ok)
+	}
+
+	if _, ok := RetryDelay(nil); ok {
+		t.Error("RetryDelay(nil) ok = true, want false")
+	}
+	if _, ok := RetryDelay(errors.New("plain")); ok {
+		t.Error("RetryDelay(plain) ok = true, want false")
+	}
+	if _, ok := RetryDelay(ToError(errtrail.New(errtrail.Unavailable, "x"))); ok {
+		t.Error("RetryDelay(no detail) ok = true, want false")
 	}
 }
