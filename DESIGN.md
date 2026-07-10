@@ -22,8 +22,8 @@ A Go error library for web services (HTTP / gRPC).
 
 ### Non-goals (out of scope for v1)
 
-- Metadata such as a log-level hint — a retryable flag is supported as of v0.3.0 (`IsRetryable` / `Register`'s `Retryable` option, §3.3)
-- gRPC's rich `errdetails` beyond `ErrorInfo` (BadRequest, RetryInfo, etc.) — an opt-in `ErrorInfo` carrying the code name is supported via `grpcerr.Domain` (§9)
+- Metadata such as a log-level hint — a retryable flag is supported as of v0.3.0 (`IsRetryable` / `Register`'s `Retryable` option, §3.3), and a retry delay as of v1.1 (`RetryAfter`, §3.3)
+- gRPC's rich `errdetails` beyond the opt-in set — `ErrorInfo` (via `grpcerr.Domain`), `RetryInfo` (via `RetryAfter`), and `BadRequest` (via `WithFieldViolation`) are attached automatically as of v1.1 (§9); anything further (LocalizedMessage, Help, ...) stays the caller's `WithDetails` job
 - Reverse conversion from HTTP status back to `Code` — unlike gRPC's status codes (which map to `Code` one-to-one, making `grpcerr.FromError`/`FromStatus` well-defined, §9), an HTTP status is inherently many-to-one (e.g. `400` could be `InvalidArgument`, `FailedPrecondition`, or `OutOfRange`), so a generic reverse mapping would be lossy and guess wrong as often as not
 - gRPC interceptors, HTTP middleware
 - Internationalization (i18n)
@@ -235,11 +235,11 @@ func (e *Error) WithCode(c Code) *Error
 func (e *Error) WithPublic(msg string) *Error
 
 // WithoutPublic returns a copy that acts as a public-data barrier: the
-// cause chain below the node contributes no public message and no public
-// fields. The node's own public data — and anything added by an outer
-// wrap — still applies; internal msg, attrs, and trace are unaffected.
-// For reclassification that must hide the original failure
-// (NotFound -> PermissionDenied).
+// cause chain below the node contributes no public message, no public
+// fields, and no field violations. The node's own public data — and
+// anything added by an outer wrap — still applies; internal msg, attrs,
+// and trace are unaffected. For reclassification that must hide the
+// original failure (NotFound -> PermissionDenied).
 func (e *Error) WithoutPublic() *Error
 
 // With returns a copy with the given slog.Attr values appended.

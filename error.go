@@ -21,9 +21,10 @@ type Error struct {
 	violations []FieldViolation // Field-level validation violations (client-visible).
 
 	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
-	// the cause chain below it contributes no public message and no public
-	// fields. This node's own public data — and anything added by an outer
-	// wrap — still applies; internal msg, attrs, and trace are unaffected.
+	// the cause chain below it contributes no public message, no public
+	// fields, and no field violations. This node's own public data — and
+	// anything added by an outer wrap — still applies; internal msg, attrs,
+	// and trace are unaffected.
 	noPublicBelow bool
 }
 
@@ -106,17 +107,19 @@ func (e *Error) WithPublic(msg string) *Error {
 }
 
 // WithoutPublic returns a copy that acts as a public-data barrier: the cause
-// chain below this node contributes no public message and no public fields to
-// LookupPublicMessage, PublicMessage, PublicFields, or anything built on them
-// (problem responses, gRPC status messages). This node's own public data —
-// and anything added by an outer wrap — still applies, and the internal
-// message, attrs, and trace are unaffected. Does not record a new frame.
+// chain below this node contributes no public message, no public fields, and
+// no field violations to LookupPublicMessage, PublicMessage, PublicFields,
+// FieldViolations, or anything built on them (problem responses, gRPC status
+// messages and details). This node's own public data — and anything added by
+// an outer wrap — still applies, and the internal message, attrs, and trace
+// are unaffected. Does not record a new frame.
 //
 // Use it when reclassifying an error whose original public data must not
 // reach the client through the new response. For example, converting a
 // NotFound that carries a public "User not found" into a PermissionDenied
 // (to hide whether the resource exists) without WithoutPublic would leak
-// that message — and any public fields — through the 403:
+// that message — and any public fields or field violations — through the
+// 403:
 //
 //	return errtrail.Wrap(err, "reclassify lookup").
 //	    WithCode(errtrail.PermissionDenied).

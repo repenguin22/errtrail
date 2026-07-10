@@ -153,7 +153,9 @@ _ = problem.Write(w, err, problem.Instance(r.URL.Path))
 Arbitrary structured extras beyond field violations still go through
 `WithPublicField(key, value)`; they surface as RFC 9457 extension members
 under their own key (an explicit `"errors"` public field overrides the
-derived one).
+derived one). That override is HTTP-only by design: public fields never
+reach the gRPC wire, so the `BadRequest` detail always derives from the
+typed violations.
 
 RFC 9457's `type` member (a URI reference identifying the problem type,
 defaulting to `about:blank`) is also supported, but opt-in: it's omitted by
@@ -270,15 +272,20 @@ A checklist, with the reasoning behind each rule:
   override with `WithCode` when you are deliberately translating one failure into
   another (e.g. a downstream `Unavailable` you choose to surface as `Internal`).
   Beware: `WithCode` does **not** clear public data set below it — an inner
-  `WithPublic("User not found")` or `WithPublicField` would still reach the
-  client through the new response. When the point of reclassifying is to *hide*
-  the original failure (NotFound → PermissionDenied), add `WithoutPublic()` to
-  block the chain's public data, then set a fresh `WithPublic` if needed.
-- **Keep internal and public strictly separate.** `WithPublic` and
-  `WithPublicField` are the *only* things a client ever sees; the internal
-  message and `With` attrs are for logs. When unsure whether a string is safe to
-  expose, leave `WithPublic` unset — the client gets the generic status text
-  (HTTP) or the code name (gRPC) rather than a leaked detail.
+  `WithPublic("User not found")`, `WithPublicField`, or `WithFieldViolation`
+  would still reach the client through the new response (a 403 hiding a
+  NotFound must not carry the lookup's field violations either). When the
+  point of reclassifying is to *hide* the original failure, add
+  `WithoutPublic()` — it blocks all three public channels below it — then set
+  a fresh `WithPublic` if needed.
+- **Keep internal and public strictly separate.** Exactly **three channels**
+  reach a client — `WithPublic`, `WithPublicField`, and `WithFieldViolation` —
+  and nothing else ever does; the internal message and `With` attrs are for
+  logs. Treat all three with the same care: a violation's field name and
+  description go verbatim into the HTTP `errors` member and the gRPC
+  `BadRequest`. When unsure whether a string is safe to expose, leave
+  `WithPublic` unset — the client gets the generic status text (HTTP) or the
+  code name (gRPC) rather than a leaked detail.
 - **Classify with `CodeOf`; match sentinels with `errors.Is`.** For "what kind of
   failure is this?" switch on `errtrail.CodeOf(err)` — errtrail deliberately does
   *not* overload `errors.Is` for codes, because implicit code matching is hard to

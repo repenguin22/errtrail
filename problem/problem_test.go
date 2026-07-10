@@ -70,11 +70,12 @@ func TestFromNeverLeaksInternal(t *testing.T) {
 }
 
 func TestFromWithoutPublicBarrier(t *testing.T) {
-	// Reclassifying with WithoutPublic: the inner public message and fields
-	// must not surface in the problem response.
+	// Reclassifying with WithoutPublic: the inner public message, fields,
+	// and field violations must not surface in the problem response.
 	inner := errtrail.New(errtrail.NotFound, "row missing").
 		WithPublic("User not found").
-		WithPublicField("user_id", "42")
+		WithPublicField("user_id", "42").
+		WithFieldViolation("user_id", "does not exist")
 	err := errtrail.Wrap(inner, "reclassify").
 		WithCode(errtrail.PermissionDenied).WithoutPublic()
 
