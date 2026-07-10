@@ -190,6 +190,24 @@ func TestNoDetailsWithoutDomain(t *testing.T) {
 	}
 }
 
+func TestNoErrorInfoForUnregisteredCode(t *testing.T) {
+	setDomain(t, "errtrail.test")
+
+	// An unregistered code's Reason would be "CODE(9999)" — spec-violating
+	// and unrecoverable — so no ErrorInfo is attached at all.
+	st := ToStatus(errtrail.New(errtrail.Code(9999), "x"))
+	if n := len(st.Details()); n != 0 {
+		t.Errorf("len(Details) = %d, want 0 for an unregistered code", n)
+	}
+	// The numeric mapping and the message fallback are unchanged.
+	if st.Code() != codes.Unknown {
+		t.Errorf("Code = %v, want Unknown", st.Code())
+	}
+	if st.Message() != "CODE(9999)" {
+		t.Errorf("Message = %q, want CODE(9999)", st.Message())
+	}
+}
+
 func TestNilErrWithDomain(t *testing.T) {
 	setDomain(t, "errtrail.test")
 

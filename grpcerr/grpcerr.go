@@ -34,10 +34,11 @@ var Domain string
 // When Domain is non-empty, an errdetails.ErrorInfo{Reason: code.String(),
 // Domain: Domain} is attached, so clients receive the errtrail code name
 // (e.g. "RATE_LIMITED") even when several custom codes share one numeric
-// gRPC code. Reason is the code's String() form — for an unregistered code
-// that is "CODE(123)", which is not AIP-193-shaped but preserves the
-// number. If the details cannot be attached (a proto marshal failure), the
-// plain status is returned instead.
+// gRPC code. The detail is attached only for registered codes (those
+// errtrail.CodeByName resolves): an unregistered code's "CODE(123)" form
+// violates the ErrorInfo.Reason spec and cannot round-trip anyway, so such
+// a status ships plain. If the details cannot be attached (a proto marshal
+// failure), the plain status is returned instead.
 //
 // Returns status.New(codes.OK, "") when err is nil. Never includes the
 // internal message, attrs, or trace. Callers who need further details
@@ -54,6 +55,11 @@ func ToStatus(err error) *status.Status {
 	}
 	st := status.New(codes.Code(code.GRPCCode()), msg)
 	if Domain == "" {
+		return st
+	}
+	if _, ok := errtrail.CodeByName(code.String()); !ok {
+		// Unregistered: "CODE(123)" violates the Reason spec and cannot
+		// round-trip anyway — attach nothing.
 		return st
 	}
 	return withErrorInfo(st, code)

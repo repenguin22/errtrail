@@ -490,9 +490,11 @@ var Domain string
 // When Domain is non-empty, attaches
 // errdetails.ErrorInfo{Reason: code.String(), Domain: Domain} so the
 // errtrail code name (e.g. a custom "RATE_LIMITED") survives the wire even
-// though the numeric gRPC code may be shared. If details cannot be attached
-// (WithDetails rejects OK statuses — a custom code may map to gRPC OK), the
-// plain status is returned instead; the status itself is never lost.
+// though the numeric gRPC code may be shared. Attached only for registered
+// codes (CodeByName resolves) — an unregistered code's "CODE(123)" violates
+// the Reason spec and can't round-trip, so it ships plain. If details cannot
+// be attached (a proto marshal failure), the plain status is returned
+// instead; the status itself is never lost.
 // Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 
@@ -506,16 +508,18 @@ func ToError(err error) error
 // non-status errors become Unknown. A custom code is recovered from an
 // errdetails.ErrorInfo whose Reason names a locally registered code AND
 // whose registered gRPC code matches the wire code — the second condition
-// guards against foreign taxonomies reusing a local code name. The wire
-// message survives via the wrapped cause; it is NOT re-published as the
-// public message (call WithPublic explicitly to propagate it). The
+// guards against foreign taxonomies reusing a local code name. The default
+// ignores ErrorInfo.Domain; the TrustedDomain(domains ...string) FromOption
+// additionally requires the Domain to match one of the given domains. The
+// wire message survives via the wrapped cause; it is NOT re-published as
+// the public message (call WithPublic explicitly to propagate it). The
 // recorded frame points inside grpcerr — wrap at the call site for a
 // caller frame.
-func FromError(err error) *errtrail.Error
+func FromError(err error, opts ...FromOption) *errtrail.Error
 
 // FromStatus is FromError for a *status.Status you already hold.
 // Returns nil when st is nil or its code is OK.
-func FromStatus(st *status.Status) *errtrail.Error
+func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error
 ```
 
 Further details (RetryInfo, BadRequest, ...) are the caller's job: `ToStatus` returns the `*status.Status`, so callers can chain their own `WithDetails` before `.Err()`. Automatic support may come later (see ROADMAP — the retryable flag exists as of core v0.3.0, but RetryInfo also needs a retry delay, which the registry doesn't carry; BadRequest can be built on the core's public fields, `WithPublicField` / `PublicFields`).
