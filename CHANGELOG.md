@@ -17,6 +17,21 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.1.1] — 2026-07-11
+
+Documentation only — no code change (review round on v1.1).
+
+- **Docs** Client-visible data is documented as **three channels** —
+  `WithPublic`, `WithPublicField`, and `WithFieldViolation` — in the package
+  guidelines, the README best practices, and the reclassification warning
+  (v1.1 added the third channel but the "only WithPublic/WithPublicField
+  reach a client" wording had not caught up). `WithoutPublic`'s contract now
+  officially states it blocks all three, including field violations — the
+  implementation always did; regression tests pin the barrier at both
+  boundaries (`problem` response and gRPC `BadRequest`). DESIGN.md's
+  non-goals no longer contradict the v1.1 details support, and the README
+  notes that the explicit-`"errors"` override is HTTP-only by design.
+
 ### [v1.1.0] — 2026-07-11
 
 Additive only — no behavior changes for existing code (ROADMAP §3).
@@ -157,6 +172,15 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [grpcerr/v1.1.1] — 2026-07-11
+
+- **Fixed** `RetryDelay` treats a `RetryInfo` without a positive delay as
+  absent — it returned `(0, true)` for an empty detail (as a foreign service
+  may attach), telling callers a recommendation exists when none does. A
+  later `RetryInfo` carrying a real delay still wins. errtrail's own
+  `RetryAfter` only registers positive delays, so servers using errtrail on
+  both ends are unaffected. Core requirement unchanged (**v1.1.0**).
 
 ### [grpcerr/v1.1.0] — 2026-07-11
 
