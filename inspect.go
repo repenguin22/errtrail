@@ -84,6 +84,11 @@ func CodeOf(err error) Code {
 // set. Returns false for nil and for non-errtrail errors (Unknown is
 // conservatively not retryable). No errors.Is inspection (e.g. of
 // context.Canceled) is performed.
+//
+// It is a transience hint, nothing more: it says the failure class tends to
+// clear up on its own, not that replaying the request is safe. Idempotency,
+// retry budgets, and honoring server pushback remain the caller's
+// responsibility.
 func IsRetryable(err error) bool {
 	return CodeOf(err).Retryable()
 }

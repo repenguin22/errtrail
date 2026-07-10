@@ -30,11 +30,18 @@ func TestFromWithPublic(t *testing.T) {
 }
 
 func TestFromDetailOmittedWhenEqualTitle(t *testing.T) {
-	// public not set -> PublicMessage falls back to http.StatusText = "Not Found" = Title.
-	err := errtrail.New(errtrail.NotFound, "internal")
+	// An explicit public message equal to the title is dropped as redundant.
+	err := errtrail.New(errtrail.NotFound, "internal").WithPublic("Not Found")
 	p := From(err)
 	if p.Detail != "" {
 		t.Errorf("Detail = %q, want empty (equals title)", p.Detail)
+	}
+
+	// With no public message set at all, the detail also stays empty — the
+	// title already carries the generic wording (From uses
+	// LookupPublicMessage, which never falls back).
+	if p := From(errtrail.New(errtrail.NotFound, "internal")); p.Detail != "" {
+		t.Errorf("Detail = %q, want empty (no public message)", p.Detail)
 	}
 }
 

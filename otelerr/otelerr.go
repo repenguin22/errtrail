@@ -74,6 +74,14 @@ func TraceAttrs(ctx context.Context) []slog.Attr {
 // OpenTelemetry gRPC semantic conventions for server spans. Custom codes
 // map through their registered gRPC code, so the registry stays the single
 // source of truth.
+//
+// Deriving from GRPCCode() rather than HTTPStatus() is not a bias toward
+// gRPC services: for the built-ins the six server-fault gRPC codes are
+// precisely the six codes mapped to HTTP 5xx, so HTTP services get the same
+// classification. The two can diverge only for a custom code registered
+// with an inconsistent pair (e.g. a 5xx HTTP status under a client-fault
+// gRPC code) — register consistently and no HTTP-specific variant of Record
+// is needed.
 func serverFault(c errtrail.Code) bool {
 	switch c.GRPCCode() {
 	case 2, 4, 12, 13, 14, 15: // UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS

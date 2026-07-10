@@ -127,6 +127,11 @@ func (e *Error) WithoutPublic() *Error {
 // With returns a copy with the given slog.Attr values appended. Does not
 // record a new frame.
 //
+// Attr values are stored by reference — no deep copy is taken. Hand over an
+// immutable snapshot: mutating a slice or map you passed later changes what
+// LogValue and %+v emit, and doing so concurrently with logging is a data
+// race.
+//
 // Example: e.With(slog.String("user_id", id), slog.Int("attempt", n))
 func (e *Error) With(attrs ...slog.Attr) *Error {
 	if e == nil {
@@ -145,6 +150,11 @@ func (e *Error) With(attrs ...slog.Attr) *Error {
 // client-visible: problem.From emits them as RFC 9457 extension members.
 // Never put internal data in a public field. Like the public message, they
 // are excluded from LogValue.
+//
+// The value is stored by reference — no deep copy is taken. Hand over an
+// immutable snapshot: mutating a slice or map you passed later changes what
+// problem.Write emits, and doing so concurrently with a request is a data
+// race.
 //
 // Example: e.WithPublicField("errors", violations)
 func (e *Error) WithPublicField(key string, value any) *Error {

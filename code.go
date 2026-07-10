@@ -127,7 +127,8 @@ type RegisterOption func(*codeInfo)
 
 // Retryable returns a RegisterOption that marks the code being registered
 // as retryable, so IsRetryable and (Code).Retryable report true for it.
-// Codes are not retryable by default.
+// Codes are not retryable by default. The flag is a transience hint only —
+// see IsRetryable for what it does not promise.
 func Retryable() RegisterOption {
 	return func(info *codeInfo) { info.retryable = true }
 }
@@ -138,6 +139,14 @@ func Retryable() RegisterOption {
 // from an init function is still the recommended pattern: every request
 // then sees the same taxonomy, and CodeByName / gRPC Reason recovery on
 // other services assume a stable registry.
+//
+// Note that a conversion reading several properties (say HTTPStatus, then
+// String, then Retryable) is race-free but not linearizable across a
+// concurrent registration: each lookup loads the then-current snapshot, so
+// one request in flight during a late registration can mix pre- and
+// post-registration answers — one more reason to register at init. Entries
+// are immutable once registered, so no snapshot-consistent lookup API is
+// provided; the window is that single in-flight request.
 //
 // Panics if c is below customCodeMin (100), if c or name is already
 // registered (names are the reverse-lookup key for CodeByName, so they must
@@ -241,6 +250,7 @@ func (c Code) GRPCCode() uint32 {
 // Built-ins: DeadlineExceeded, ResourceExhausted, Aborted, and Unavailable
 // return true; everything else returns false. Custom codes return true only
 // if registered with the Retryable option. Unregistered codes return false.
+// A transience hint only — see IsRetryable for what it does not promise.
 func (c Code) Retryable() bool {
 	if info, ok := registryPtr.Load().codes[c]; ok {
 		return info.retryable

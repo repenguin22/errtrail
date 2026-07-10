@@ -105,6 +105,7 @@ func (c Code) GRPCCode() uint32
 // Built-ins: DeadlineExceeded, ResourceExhausted, Aborted, and Unavailable
 // return true; everything else false. Custom codes return true only if
 // registered with the Retryable option; unregistered codes return false.
+// A transience hint only — see IsRetryable.
 func (c Code) Retryable() bool
 
 // CodeByName returns the Code registered under name — built-ins included,
@@ -146,6 +147,7 @@ type RegisterOption func(*codeInfo)
 
 // Retryable returns a RegisterOption marking the code as retryable
 // (IsRetryable / (Code).Retryable report true). Not retryable by default.
+// A transience hint only — see IsRetryable.
 func Retryable() RegisterOption
 
 // Register adds a custom code. Safe to call at any time, including
@@ -154,12 +156,16 @@ func Retryable() RegisterOption
 // so every request sees the same taxonomy.
 // Panics if c < 100, if the code or the name is already registered (names
 // are the CodeByName reverse-lookup key, so they must be unique), if name
-// is empty, if httpStatus is outside [100, 599], or if grpcCode is above 16.
+// does not match [A-Z][A-Z0-9_]+[A-Z0-9] / exceeds 63 chars (the
+// ErrorInfo.Reason wire constraints), if httpStatus is outside [400, 599]
+// (a Code classifies an error; 2xx/3xx would make problem.Write emit a
+// success response), or if grpcCode is outside [1, 16] (0 is OK — the error
+// would vanish through grpcerr.ToError).
 func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption)
 ```
 
 - 0–99 are reserved (currently only 0–16 are used; the rest is held for future built-ins). Custom codes start at 100.
-- Implemented as an immutable `registry` snapshot (`codes map[Code]codeInfo` — `codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}` — plus a `names map[string]Code` reverse index for CodeByName) behind an `atomic.Pointer[registry]`. Readers do one atomic load and a map lookup; `Register` takes a writer-only mutex, clones the snapshot, adds the entry to both maps, and swaps the pointer. A lookup therefore never observes a partial write, and late registration is safe rather than undefined behavior. The 17 built-ins seed the first snapshot at init, so lookups go through a single path.
+- Implemented as an immutable `registry` snapshot (`codes map[Code]codeInfo` — `codeInfo{name string; httpStatus int; grpcCode uint32; retryable bool}` — plus a `names map[string]Code` reverse index for CodeByName) behind an `atomic.Pointer[registry]`. Readers do one atomic load and a map lookup; `Register` takes a writer-only mutex, clones the snapshot, adds the entry to both maps, and swaps the pointer. A lookup therefore never observes a partial write, and late registration is safe rather than undefined behavior. The 17 built-ins seed the first snapshot at init, so lookups go through a single path. Composite conversions (reading status, then name, then retryable) are race-free but not linearizable across a concurrent registration — a request in flight during a late registration can mix pre- and post-registration answers, which is one more reason to register at init. No snapshot-consistent lookup API is provided: entries are immutable once registered, so the window is that single in-flight request.
 - Options keep the signature open for future per-code metadata (e.g. a log-level hint) without another signature change.
 
 ---
@@ -206,7 +212,7 @@ Frame recording captures a single pc via a shared `caller()` helper — `runtime
 
 ### 4.2 Builder methods
 
-All return a shallow copy of the receiver. **None re-record a frame** (recording is New/Wrap's job). Appending to attrs is done as "copy then append", avoiding sharing with the original slice (equivalent to `append(slices.Clip(e.attrs), ...)`).
+All return a shallow copy of the receiver. **None re-record a frame** (recording is New/Wrap's job). Appending to attrs is done as "copy then append", avoiding sharing with the original slice (equivalent to `append(slices.Clip(e.attrs), ...)`). Attr and field *values* are stored by reference (no deep copy) — callers hand over an immutable snapshot; mutating a passed map or slice later changes what the boundary emits, and doing so concurrently is a data race.
 
 ```go
 // WithCode returns a copy with the code replaced.
@@ -214,6 +220,14 @@ func (e *Error) WithCode(c Code) *Error
 
 // WithPublic returns a copy with the public message set.
 func (e *Error) WithPublic(msg string) *Error
+
+// WithoutPublic returns a copy that acts as a public-data barrier: the
+// cause chain below the node contributes no public message and no public
+// fields. The node's own public data — and anything added by an outer
+// wrap — still applies; internal msg, attrs, and trace are unaffected.
+// For reclassification that must hide the original failure
+// (NotFound -> PermissionDenied).
+func (e *Error) WithoutPublic() *Error
 
 // With returns a copy with the given slog.Attr values appended.
 // Example: e.With(slog.String("user_id", id), slog.Int("attempt", n))
@@ -258,6 +272,8 @@ func CodeOf(err error) Code
 // derived purely from CodeOf(err) — see (Code).Retryable for the built-in
 // set. Returns false for nil and for non-errtrail errors (Unknown is
 // conservatively not retryable). No errors.Is inspection is performed.
+// A transience hint only: replay safety (idempotency, retry budgets,
+// server pushback) remains the caller's responsibility.
 func IsRetryable(err error) bool
 
 // LookupPublicMessage walks the chain from the outside in and returns the
@@ -265,7 +281,8 @@ func IsRetryable(err error) bool
 // never falls back — for callers that want their own fallback policy
 // (grpcerr.ToStatus falls back to the code name; problem.From leaves the
 // detail empty because title already carries the generic wording; an i18n
-// layer might pick a translation).
+// layer might pick a translation). Public messages below a WithoutPublic
+// barrier are not considered.
 func LookupPublicMessage(err error) (string, bool)
 
 // PublicMessage is LookupPublicMessage plus a two-level fallback:
@@ -288,10 +305,12 @@ func Trace(err error) []Frame
 func Attrs(err error) []slog.Attr
 
 // PublicFields collects the public fields (WithPublicField) of every
-// *Error in the chain into a map. For a duplicate key, the outermost value
-// wins (consistent with CodeOf and PublicMessage: layers closer to the
-// boundary override). Returns nil if none are found. Never includes attrs
-// or internal messages.
+// *Error in the chain into a map. For a duplicate key, the outermost
+// *Error's value wins (consistent with CodeOf and PublicMessage: layers
+// closer to the boundary override); within one *Error, the last
+// WithPublicField wins (consistent with calling WithPublic twice). Fields
+// below a WithoutPublic barrier are not collected. Returns nil if none are
+// found. Never includes attrs or internal messages.
 func PublicFields(err error) map[string]any
 ```
 
@@ -582,6 +601,7 @@ Design decisions:
 | `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
 | Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage`, the gRPC message, and the problem Title all fall back to the code name (`"CANCELED"`) — the library never hands `""` to a client |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs` collect every branch) |
+| `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. In a Join, a barrier inside one branch never blocks a sibling branch |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |
 | `New(OK, ...)` | Not forbidden (can't be caught by vet), but documented as discouraged. Since `CodeOf` skips an Error whose code == OK, it effectively resolves to Unknown |

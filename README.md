@@ -215,11 +215,15 @@ b := errtrail.New(errtrail.InvalidArgument, "age invalid").WithPublicField("fiel
 joined := errors.Join(a, b)
 ```
 
-- **`CodeOf` / `PublicMessage`** return the **first branch's** value (`a`'s here)
-  — a single response can only carry one HTTP/gRPC status, so the first error
-  wins by convention. If the branches disagree on `Code`, decide deliberately
-  (e.g. `WithCode` on the `Join` result, or pick the branch order) rather than
-  relying on which validator ran first.
+- **`CodeOf`** returns the first branch's **non-OK code** and **`PublicMessage`**
+  the first branch's **non-empty public message** — a single response can only
+  carry one status and one message, so the first hit wins by convention. Note
+  these are separate walks: when the first branch has a code but no public
+  message, the message may come from a *different* branch than the code. That
+  combination is intentional (each walk finds the best available value), but if
+  the branches diverge, decide deliberately — set an explicit `WithCode` +
+  `WithPublic` on the `Join` result rather than relying on which validator ran
+  first.
 - **`Trace` / `Attrs`** collect **every branch**, so nothing is lost from logs.
 - **`PublicFields` collects every branch too, but a duplicate key keeps only
   the first branch's value** — the same outermost-wins rule `Wrap` chains use.
@@ -254,6 +258,11 @@ A checklist, with the reasoning behind each rule:
   sets a new code hides the real cause. Let the source's code propagate; only
   override with `WithCode` when you are deliberately translating one failure into
   another (e.g. a downstream `Unavailable` you choose to surface as `Internal`).
+  Beware: `WithCode` does **not** clear public data set below it — an inner
+  `WithPublic("User not found")` or `WithPublicField` would still reach the
+  client through the new response. When the point of reclassifying is to *hide*
+  the original failure (NotFound → PermissionDenied), add `WithoutPublic()` to
+  block the chain's public data, then set a fresh `WithPublic` if needed.
 - **Keep internal and public strictly separate.** `WithPublic` and
   `WithPublicField` are the *only* things a client ever sees; the internal
   message and `With` attrs are for logs. When unsure whether a string is safe to
@@ -279,6 +288,8 @@ A checklist, with the reasoning behind each rule:
 - **Retry on `IsRetryable`, not a hand-maintained list.** Built-ins `Unavailable`,
   `DeadlineExceeded`, `ResourceExhausted`, and `Aborted` are retryable; custom
   codes opt in with `errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`.
+  It's a *transience hint* derived only from the `Code` — whether replaying the
+  request is safe (idempotency, retry budget, server pushback) is still your call.
 
 ## Structured logging
 

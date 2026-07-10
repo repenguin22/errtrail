@@ -1,7 +1,9 @@
 // Package problem converts errtrail errors into RFC 9457 (Problem Details
 // for HTTP APIs) JSON responses. It never includes the internal message,
-// attrs, or trace — clients only ever see the public message
-// (errtrail.PublicMessage).
+// attrs, or trace — clients only ever see the explicitly-set public message
+// (errtrail.LookupPublicMessage, emitted as the detail member; the title
+// carries the generic status wording) and the public fields
+// (errtrail.PublicFields, emitted as extension members).
 package problem
 
 import (
