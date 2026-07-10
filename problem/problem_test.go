@@ -2,8 +2,12 @@ package problem
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/repenguin22/errtrail"
@@ -223,6 +227,59 @@ func TestWriteUnmarshalableExtension(t *testing.T) {
 	}
 	if rec.Body.Len() != 0 {
 		t.Errorf("body should be empty, got %q", rec.Body.String())
+	}
+}
+
+func TestWriteAdversarialNeverLeaksInternals(t *testing.T) {
+	// Adversarial end-to-end check: build the nastiest realistic chain —
+	// raw error with credentials, internal messages, attrs, a std fmt layer,
+	// a Join branch, wraps on top — and assert the serialized HTTP body
+	// contains none of it. Only the explicitly public data may appear.
+	base := errors.New(`pq: password authentication failed for "svc-hunter2"`)
+	inner := errtrail.Wrap(base, "query user by email").
+		WithCode(errtrail.NotFound).
+		With(slog.String("user_email", "leak-attr@example.com"), slog.Int("attempt", 3)).
+		WithPublic("User not found").
+		WithPublicField("resource", "user")
+	mid := fmt.Errorf("repo layer: %w", inner)
+	sibling := errtrail.New(errtrail.Internal, "cache shard 7 corrupt")
+	outer := errtrail.Wrap(errors.Join(mid, sibling), "handle profile request")
+
+	rec := httptest.NewRecorder()
+	if wErr := Write(rec, outer, Instance("/users/42")); wErr != nil {
+		t.Fatalf("Write returned error: %v", wErr)
+	}
+	body := rec.Body.String()
+
+	// Nothing internal: message fragments, attr keys/values, and anything a
+	// serialized trace would carry (file paths, function/test names).
+	leaks := []string{
+		"hunter2", "password", "pq:",
+		"query user by email", "repo layer", "cache shard", "handle profile request",
+		"user_email", "leak-attr", "attempt",
+		".go:", "problem_test", "trace",
+	}
+	for _, s := range leaks {
+		if strings.Contains(body, s) {
+			t.Errorf("body leaked internal data %q:\n%s", s, body)
+		}
+	}
+
+	// Sanity: the response actually carries the public data, so the leak
+	// assertions above can't pass vacuously on an empty body.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(rec.Body.Bytes(), &raw); e != nil {
+		t.Fatalf("invalid json: %v", e)
+	}
+	if raw["code"] != "NOT_FOUND" || raw["detail"] != "User not found" ||
+		raw["resource"] != "user" || raw["instance"] != "/users/42" {
+		t.Errorf("public data missing from body: %s", body)
 	}
 }
 
