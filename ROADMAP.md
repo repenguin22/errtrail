@@ -20,15 +20,102 @@ deliberately stay on the documented "set before startup" contract — they are
 plain package variables with no partial-write hazard, so the cost/benefit of
 atomics there is different.
 
-### 1. Cut v1.0
+### 1. Pre-v1.0 fixes from the final review round (2026-07-10)
 
-**All v1.0 criteria in the README are now met** — the last one closed with
-`grpcerr/e2e_test.go`, a bufconn-based wire-level round-trip proving that
-`ErrorInfo` details survive a real gRPC transport. What remains is the release
-mechanics: tag core v1.0.0 first, bump the submodules' core requirement, then
-tag `grpcerr/v1.0.0` and `otelerr/v1.0.0`; add the entries to CHANGELOG.md and
-flip the README's pre-1.0 wording to the SemVer compatibility promise (no
-breaking change without a major bump).
+Two external reviews ran before tagging v1.0; every claim below was verified
+against the code (the behavioral ones empirically). These are the adopted
+items — all semantics changes that would be breaking after v1.0, so they must
+land first. Expected releases: core **v0.7.0**, then grpcerr **v0.5.0**
+(two-stage, core tagged first as usual). otelerr unchanged.
+
+Code changes:
+
+1. **`(*Error).WithoutPublic()`** — a public-data barrier: the node's cause
+   chain below it contributes no public message and no public fields
+   (re-adding on the outside still works; internal msg/attrs/trace unaffected).
+   Motivation: reclassifying NotFound→PermissionDenied to hide existence today
+   leaks the inner "User not found" + `WithPublicField` data through the 403
+   (verified). Public *message* can be masked by an outer `WithPublic`;
+   public *fields* currently cannot be blocked at all. Implement via a barrier
+   flag consulted by `LookupPublicMessage` / `PublicFields` / `collect`.
+   Do NOT overload `WithPublic("")` as a sentinel.
+2. **Tighten `Register` validation** (panics, like existing checks):
+   httpStatus ∈ **[400, 599]** (an error code mapping to 2xx/3xx makes
+   `problem.Write` emit success responses); grpcCode ∈ **[1, 16]**
+   (grpcCode 0 = OK makes `grpcerr.ToError` return nil — the error vanishes;
+   verified); name must match ErrorInfo.Reason constraints
+   `[A-Z][A-Z0-9_]+[A-Z0-9]`, ≤ 63 chars (spec quoted in errdetails source;
+   all names currently registered in this repo already comply). Rework
+   grpcerr's `TestDetailsFallbackOnOKMappedCode` (it registers grpcCode 0);
+   keep the WithDetails-failure fallback itself as marshal-failure defense.
+3. **`PublicFields`: last-write-wins within one `*Error` node** (currently
+   first-wins, verified — inconsistent with `WithPublic` twice = last wins).
+   Keep outermost-wins across nodes and first-branch depth-first for Join.
+   Implementation: iterate a node's fields in reverse in the walk callback.
+4. **`PublicMessage`: second-level fallback to `Code.String()`** when
+   `http.StatusText` is empty (Canceled/499, custom non-standard statuses).
+   Removes the last path in the library that can hand "" to a client;
+   consistent with problem's title and grpcerr's message fallbacks.
+5. **grpcerr: add `opts ...FromOption` to `FromError` / `FromStatus` now** —
+   adding a variadic parameter later changes the function type and is a
+   breaking change under Go API-compat rules, so the option shape must exist
+   before v1.0. Implement **`TrustedDomain(domains ...string)`**: when given,
+   custom-code recovery additionally requires `ErrorInfo.Domain` to match.
+   Default (no option) keeps today's name+numeric double check — do not flip
+   the default; it would kill the zero-config "same taxonomy" UX.
+6. **grpcerr: don't attach `ErrorInfo` for unregistered codes** — Reason
+   "CODE(123)" violates the UPPER_SNAKE spec and can't round-trip anyway.
+   Attach only when `errtrail.CodeByName(code.String())` resolves.
+
+Documentation (no behavior change):
+
+- problem package comment still says `PublicMessage`; From uses
+  `LookupPublicMessage` (problem/problem.go:1-4). Same staleness in
+  `TestFromDetailOmittedWhenEqualTitle`'s comment.
+- README Join section: `PublicMessage` takes the first *non-empty* public
+  across branches (may come from a different branch than the code — that
+  combination is intentional; recommend explicit WithCode+WithPublic on a
+  Join whose branches diverge). CodeOf takes the first non-OK.
+- `IsRetryable` / `Retryable`: state it is a **transience hint** derived only
+  from the Code — replay safety (idempotency, retry budget, pushback) is the
+  caller's responsibility. Keep the name (industry-standard term); no rename.
+- `With` / `WithPublicField`: ownership contract — values are stored by
+  reference (no deep copy); hand over an immutable snapshot and don't mutate
+  it afterward (mutating a passed map later changes what problem.Write emits,
+  and concurrently is a data race).
+- `Register`: note that composite conversions (status + name + retryable read
+  separately) are race-free but not linearizable across a concurrent
+  registration — one more reason to register at init. No snapshot API needed
+  (entries are immutable once registered; the window is one request during a
+  late registration).
+- `FromError` / `FromStatus`: add the same typed-nil warning `Wrap` has
+  (they also return `*Error`; unconditional `return grpcerr.FromError(err)`
+  from a function typed `error` is the same footgun).
+- otelerr: document that server-fault is derived from `GRPCCode()` and that
+  for built-ins this coincides exactly with HTTP 5xx (the six server-fault
+  codes are precisely the six 5xx codes); divergence is only possible for
+  inconsistently registered custom codes. No RecordHTTP variant needed.
+- README reclassification bullet: warn that WithCode does not clear public
+  data from below; point at `WithoutPublic()`.
+
+Tests: cover each change above, plus an adversarial "serialized HTTP body
+never contains internal msg/attrs/trace" test and TrustedDomain
+match/mismatch cases.
+
+Decided against (record, don't re-litigate without new evidence): flipping
+FromError's default to no-recovery (kills zero-config UX; numeric+name double
+check bounds the blast radius); renaming Retryable→Transient (established
+term; docs carry the nuance); a snapshot-consistent registry lookup API;
+branch-atomic Join semantics; changing `problem.From(nil)`'s documented
+200-OK behavior; deep-copying attr/field values.
+
+### 2. Cut v1.0
+
+After #1 lands: tag core v1.0.0 first, bump the submodules' core requirement,
+tag `grpcerr/v1.0.0` and `otelerr/v1.0.0`; add CHANGELOG entries and flip the
+README's pre-1.0 wording to the SemVer compatibility promise (no breaking
+change without a major bump). Update the README v1.0 checklist to include the
+review-round fixes.
 
 Deliberately-not-doing notes kept for the record: a real-server HTTP E2E
 (httptest already verifies everything errtrail touches — the transport layer

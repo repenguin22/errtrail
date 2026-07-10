@@ -380,7 +380,10 @@ The feature surface is settled; v1.0 is a promise to keep it stable (no breaking
 - [x] The `problem.TypeURL` / `grpcerr.Domain` "set before startup" contract is decided (documented as final — they are plain package variables with no partial-write hazard)
 - [x] gRPC wire-level round-trip test — a real `grpc.Server`/`ClientConn` over bufconn verifies that `ErrorInfo` details survive the actual transport (`grpcerr/e2e_test.go`)
 
-All criteria are met; v1.0 can be tagged.
+All original criteria are met. A final review round (2026-07-10) surfaced a
+short list of pre-v1.0 semantics fixes — things that would be breaking to
+change later — tracked in [ROADMAP.md](ROADMAP.md); v1.0 is tagged once those
+land.
 
 ## License
 
