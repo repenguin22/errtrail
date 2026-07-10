@@ -15,6 +15,43 @@ in the README for what that means and for the criteria for cutting v1.0.
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v0.7.0] — 2026-07-10
+
+The pre-v1.0 semantics fixes from the final review round (see ROADMAP §1) —
+changes that would have been breaking after v1.0.
+
+- **Added** `(*Error).WithoutPublic()` — a public-data barrier: the cause chain
+  below the node contributes no public message and no public fields
+  (`LookupPublicMessage`, `PublicFields`, `problem`, and `grpcerr` all respect
+  it). The node's own public data and anything added by an outer wrap still
+  apply; the internal message, attrs, and trace are unaffected. For
+  reclassifications that must hide the original failure (NotFound →
+  PermissionDenied), where the inner public data previously leaked through the
+  new response.
+- **Changed** `Register` validation tightened (panics at registration):
+  httpStatus must be in **[400, 599]** (was [100, 599] — a 2xx/3xx mapping made
+  `problem.Write` emit a success response), grpcCode in **[1, 16]** (was 0–16 —
+  0 is OK, which made `grpcerr.ToError` return nil and silently drop the
+  error), and the name must match the `ErrorInfo.Reason` wire constraints
+  `[A-Z][A-Z0-9_]+[A-Z0-9]`, ≤ 63 chars (was any non-empty string). A
+  registration that used to pass may now panic at startup.
+- **Changed** `PublicFields`: within one `*Error`, the **last** `WithPublicField`
+  now wins for a duplicate key (was first) — consistent with calling
+  `WithPublic` twice. Outermost-wins across nodes and first-branch-wins across
+  `Join` branches are unchanged.
+- **Changed** `PublicMessage` falls back to the code name (e.g. `"CANCELED"`)
+  when `http.StatusText` has no text for the status — it never returns `""`
+  for a non-nil error anymore, consistent with the problem title and the gRPC
+  message fallbacks.
+- **Docs** `IsRetryable`/`Retryable` documented as a transience hint (replay
+  safety — idempotency, retry budgets, pushback — stays with the caller);
+  `With`/`WithPublicField` ownership contract (values stored by reference,
+  hand over an immutable snapshot); `Register`'s composite reads are race-free
+  but not linearizable across a concurrent registration; stale `problem`
+  package comment fixed; README Join semantics stated precisely; the
+  reclassification bullet now points at `WithoutPublic`. An adversarial test
+  asserts the serialized HTTP body never contains internal msg/attrs/trace.
+
 ### [v0.6.0] — 2026-07-09
 
 - **Added** `LookupPublicMessage(err) (string, bool)` — the first explicitly-set
@@ -87,6 +124,25 @@ in the README for what that means and for the criteria for cutting v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [grpcerr/v0.5.0] — 2026-07-10
+
+- **Added** `FromError` / `FromStatus` now take `opts ...FromOption`; existing
+  calls compile unchanged. The variadic shape had to exist before v1.0 —
+  adding it later changes the function type, a breaking change under Go
+  API-compat rules. First option: **`TrustedDomain(domains ...string)`** —
+  custom-code recovery additionally requires the `ErrorInfo.Domain` to match
+  one of the given domains, for clients that also talk to services outside
+  their own taxonomy. The default (no option) keeps the name+numeric double
+  check and does not inspect the Domain, preserving the zero-config
+  "same taxonomy" behavior.
+- **Changed** *(wire-visible)* `ToStatus` / `ToError` no longer attach an
+  `ErrorInfo` for an **unregistered** code: its Reason (`"CODE(123)"`)
+  violates the `ErrorInfo.Reason` spec and cannot round-trip anyway.
+  Registered codes (built-ins included) are unchanged.
+- **Docs** `FromError` / `FromStatus` carry the same typed-nil warning `Wrap`
+  has (they also return `*Error`).
+- Requires core **v0.7.0**.
 
 ### [grpcerr/v0.4.0] — 2026-07-09
 
