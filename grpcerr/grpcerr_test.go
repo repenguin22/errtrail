@@ -295,24 +295,18 @@ func TestFromErrorPreservesCause(t *testing.T) {
 	}
 }
 
-const legacyOK errtrail.Code = 101
-
-var registerLegacyOKOnce sync.Once
-
-func TestDetailsFallbackOnOKMappedCode(t *testing.T) {
-	// Register allows mapping a custom code to gRPC OK; WithDetails rejects
-	// OK statuses, so ToStatus must fall back to the undetailed status
-	// rather than lose it.
-	registerLegacyOKOnce.Do(func() {
-		errtrail.Register(legacyOK, "LEGACY_OK", 200, uint32(codes.OK))
-	})
+func TestWithErrorInfoFallbackWhenRejected(t *testing.T) {
+	// The WithDetails-failure fallback is kept as defense against a proto
+	// marshal failure: the status itself must never be lost over details.
+	// Register no longer accepts a code mapped to gRPC OK, so trigger the
+	// rejection directly with an OK status (WithDetails always rejects OK).
 	setDomain(t, "errtrail.test")
 
-	st := ToStatus(errtrail.New(legacyOK, "odd mapping"))
+	st := withErrorInfo(status.New(codes.OK, ""), errtrail.NotFound)
 	if st.Code() != codes.OK {
-		t.Errorf("Code = %v, want OK", st.Code())
+		t.Errorf("Code = %v, want OK (status preserved)", st.Code())
 	}
 	if n := len(st.Details()); n != 0 {
-		t.Errorf("len(Details) = %d, want 0 (details cannot attach to OK)", n)
+		t.Errorf("len(Details) = %d, want 0 (attach must fail cleanly)", n)
 	}
 }

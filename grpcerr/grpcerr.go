@@ -34,8 +34,8 @@ var Domain string
 // (e.g. "RATE_LIMITED") even when several custom codes share one numeric
 // gRPC code. Reason is the code's String() form — for an unregistered code
 // that is "CODE(123)", which is not AIP-193-shaped but preserves the
-// number. If the details cannot be attached (e.g. a custom code registered
-// with gRPC code OK), the plain status is returned instead.
+// number. If the details cannot be attached (a proto marshal failure), the
+// plain status is returned instead.
 //
 // Returns status.New(codes.OK, "") when err is nil. Never includes the
 // internal message, attrs, or trace. Callers who need further details
@@ -54,13 +54,19 @@ func ToStatus(err error) *status.Status {
 	if Domain == "" {
 		return st
 	}
-	detailed, dErr := st.WithDetails(&errdetails.ErrorInfo{
+	return withErrorInfo(st, code)
+}
+
+// withErrorInfo attaches an errdetails.ErrorInfo{Reason: code.String(),
+// Domain: Domain} to st. If the details cannot be attached (WithDetails
+// rejects OK statuses and surfaces proto marshal failures), the plain status
+// is returned instead — never lose the status itself over details.
+func withErrorInfo(st *status.Status, code errtrail.Code) *status.Status {
+	detailed, err := st.WithDetails(&errdetails.ErrorInfo{
 		Reason: code.String(),
 		Domain: Domain,
 	})
-	if dErr != nil {
-		// WithDetails fails on an OK status (a custom code may be registered
-		// with gRPC code OK) — never lose the status itself over details.
+	if err != nil {
 		return st
 	}
 	return detailed

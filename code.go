@@ -141,23 +141,25 @@ func Retryable() RegisterOption {
 //
 // Panics if c is below customCodeMin (100), if c or name is already
 // registered (names are the reverse-lookup key for CodeByName, so they must
-// be unique), if name is empty, if httpStatus is outside [100, 599] (an
-// out-of-range status would otherwise panic inside
-// http.ResponseWriter.WriteHeader at request time, far from the cause), or
-// if grpcCode is above 16 (gRPC defines codes 0–16; anything else is not
-// portable across clients).
+// be unique), if name does not match [A-Z][A-Z0-9_]+[A-Z0-9] or exceeds 63
+// characters (the errdetails.ErrorInfo.Reason constraints — grpcerr puts the
+// name on the wire as the Reason), if httpStatus is outside [400, 599] (a
+// Code classifies an error; mapping it to a 2xx/3xx would make problem.Write
+// emit a success response), or if grpcCode is outside [1, 16] (gRPC defines
+// codes 0–16, and 0 is OK — an error mapped to OK would make grpcerr.ToError
+// return nil, silently dropping the error).
 func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...RegisterOption) {
 	if c < customCodeMin {
 		panic("errtrail: custom code must be >= 100, got " + strconv.FormatUint(uint64(c), 10))
 	}
-	if name == "" {
-		panic("errtrail: code name must not be empty")
+	if !validCodeName(name) {
+		panic("errtrail: code name must match [A-Z][A-Z0-9_]+[A-Z0-9] and be at most 63 characters, got " + strconv.Quote(name))
 	}
-	if httpStatus < 100 || httpStatus > 599 {
-		panic("errtrail: httpStatus must be in [100, 599], got " + strconv.Itoa(httpStatus))
+	if httpStatus < 400 || httpStatus > 599 {
+		panic("errtrail: httpStatus must be in [400, 599], got " + strconv.Itoa(httpStatus))
 	}
-	if grpcCode > 16 {
-		panic("errtrail: grpcCode must be a gRPC code (0-16), got " + strconv.FormatUint(uint64(grpcCode), 10))
+	if grpcCode == 0 || grpcCode > 16 {
+		panic("errtrail: grpcCode must be in [1, 16] (0 is OK, which would drop the error), got " + strconv.FormatUint(uint64(grpcCode), 10))
 	}
 
 	registerMu.Lock()
@@ -177,6 +179,33 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 	next.codes[c] = info
 	next.names[name] = c
 	registryPtr.Store(next)
+}
+
+// validCodeName reports whether name matches [A-Z][A-Z0-9_]+[A-Z0-9] with at
+// most 63 characters — the errdetails.ErrorInfo.Reason constraints, checked
+// here so a registered name is always legal on the gRPC wire. Hand-rolled to
+// keep the core free of a regexp dependency.
+func validCodeName(name string) bool {
+	if len(name) < 3 || len(name) > 63 {
+		return false
+	}
+	for i := range len(name) {
+		c := name[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+			if i == 0 {
+				return false
+			}
+		case c == '_':
+			if i == 0 || i == len(name)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // String returns the code's name, e.g. "NOT_FOUND" for built-ins or

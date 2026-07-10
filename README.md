@@ -330,8 +330,8 @@ func init() {
     errtrail.Register(
         RateLimited,
         "RATE_LIMITED",                 // unique SCREAMING_SNAKE name; the wire/config lookup key
-        http.StatusTooManyRequests,     // HTTP status (must be in [100, 599])
-        8,                              // gRPC code, ResourceExhausted (must be 0–16)
+        http.StatusTooManyRequests,     // HTTP status (must be in [400, 599] — a Code classifies an error)
+        8,                              // gRPC code, ResourceExhausted (must be 1–16; 0 is OK)
         errtrail.Retryable(),           // optional: makes IsRetryable report true
     )
 }
@@ -342,9 +342,11 @@ Once registered, `RateLimited` behaves like a built-in everywhere: `HTTPStatus`,
 resolve it through the same table, and `CodeByName("RATE_LIMITED")` recovers it
 (used by `grpcerr.FromError` to rebuild the code from the wire).
 
-`Register` panics on misuse — a code below 100, a duplicate code or name, an
-empty name, an out-of-range HTTP status, or a gRPC code above 16 — so a
-mistake surfaces at startup rather than mid-request.
+`Register` panics on misuse — a code below 100, a duplicate code or name, a
+name that doesn't match `[A-Z][A-Z0-9_]+[A-Z0-9]` (≤ 63 chars, the
+`ErrorInfo.Reason` wire constraints), an HTTP status outside `[400, 599]`, or
+a gRPC code outside `[1, 16]` — so a mistake surfaces at startup rather than
+mid-request.
 
 ## Benchmarks
 

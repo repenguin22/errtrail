@@ -2,6 +2,7 @@ package errtrail
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -217,9 +218,18 @@ func TestRegisterValidatesArguments(t *testing.T) {
 		grpcCode   uint32
 	}{
 		{"empty name", "", 500, 2},
-		{"httpStatus below 100", "BAD", 0, 2},
-		{"httpStatus above 599", "BAD", 600, 2},
-		{"grpcCode above 16", "BAD", 500, 17},
+		{"lowercase name", "lower_case", 500, 2},
+		{"name starting with digit", "1LEADING_DIGIT", 500, 2},
+		{"name starting with underscore", "_LEADING", 500, 2},
+		{"name ending with underscore", "TRAILING_", 500, 2},
+		{"two-character name", "AB", 500, 2},
+		{"name with dash", "WITH-DASH", 500, 2},
+		{"name above 63 characters", strings.Repeat("A", 64), 500, 2},
+		{"httpStatus below 400 (success status)", "BAD_STATUS", 200, 2},
+		{"httpStatus 399", "BAD_STATUS", 399, 2},
+		{"httpStatus above 599", "BAD_STATUS", 600, 2},
+		{"grpcCode 0 (OK would drop the error)", "BAD_GRPC", 500, 0},
+		{"grpcCode above 16", "BAD_GRPC", 500, 17},
 	}
 	for _, c := range cases {
 		t.Run(c.desc, func(t *testing.T) {
@@ -229,6 +239,29 @@ func TestRegisterValidatesArguments(t *testing.T) {
 				}
 			}()
 			Register(Code(102), c.name, c.httpStatus, c.grpcCode)
+		})
+	}
+}
+
+func TestRegisterAcceptsBoundaryArguments(t *testing.T) {
+	cases := []struct {
+		desc       string
+		name       string
+		httpStatus int
+		grpcCode   uint32
+	}{
+		{"lower bounds", "ABC", 400, 1},
+		{"upper bounds", strings.Repeat("A", 63), 599, 16},
+		{"digits and underscores inside", "A2_B_9", 418, 9},
+	}
+	for i, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			code := Code(130 + i)
+			Register(code, c.name, c.httpStatus, c.grpcCode)
+			t.Cleanup(func() { unregister(code, c.name) })
+			if got := code.String(); got != c.name {
+				t.Errorf("String() = %q, want %q", got, c.name)
+			}
 		})
 	}
 }
