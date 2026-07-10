@@ -153,6 +153,47 @@ func TestFromExtensionsFlattened(t *testing.T) {
 	}
 }
 
+func TestFromFieldViolations(t *testing.T) {
+	err := errtrail.New(errtrail.InvalidArgument, "bad request").
+		WithPublic("Validation failed").
+		WithFieldViolation("email", "must be a valid email address").
+		WithFieldViolation("age", "must be at least 0")
+
+	body, mErr := json.Marshal(From(err))
+	if mErr != nil {
+		t.Fatalf("marshal: %v", mErr)
+	}
+	var raw map[string]any
+	if e := json.Unmarshal(body, &raw); e != nil {
+		t.Fatal(e)
+	}
+	errs, ok := raw["errors"].([]any)
+	if !ok || len(errs) != 2 {
+		t.Fatalf(`errors = %v (%T), want 2 entries`, raw["errors"], raw["errors"])
+	}
+	first, _ := errs[0].(map[string]any)
+	if first["field"] != "email" || first["description"] != "must be a valid email address" {
+		t.Errorf("errors[0] = %v", errs[0])
+	}
+
+	// Without violations, the key is absent entirely.
+	if p := From(errtrail.New(errtrail.InvalidArgument, "x")); p.Extensions != nil {
+		t.Errorf("Extensions = %v, want nil without violations", p.Extensions)
+	}
+}
+
+func TestFromExplicitErrorsFieldWins(t *testing.T) {
+	// An explicit WithPublicField("errors", ...) overrides the derived
+	// member built from field violations.
+	err := errtrail.New(errtrail.InvalidArgument, "x").
+		WithPublicField("errors", "explicit").
+		WithFieldViolation("email", "invalid")
+	p := From(err)
+	if p.Extensions["errors"] != "explicit" {
+		t.Errorf(`Extensions["errors"] = %v, want the explicit public field`, p.Extensions["errors"])
+	}
+}
+
 func TestMarshalDropsReservedAndEmptyExtensionKeys(t *testing.T) {
 	err := errtrail.New(errtrail.InvalidArgument, "x").
 		WithPublicField("status", 999). // reserved — must not corrupt the real status
@@ -240,7 +281,8 @@ func TestWriteAdversarialNeverLeaksInternals(t *testing.T) {
 		WithCode(errtrail.NotFound).
 		With(slog.String("user_email", "leak-attr@example.com"), slog.Int("attempt", 3)).
 		WithPublic("User not found").
-		WithPublicField("resource", "user")
+		WithPublicField("resource", "user").
+		WithFieldViolation("user_id", "unknown user")
 	mid := fmt.Errorf("repo layer: %w", inner)
 	sibling := errtrail.New(errtrail.Internal, "cache shard 7 corrupt")
 	outer := errtrail.Wrap(errors.Join(mid, sibling), "handle profile request")
@@ -280,6 +322,10 @@ func TestWriteAdversarialNeverLeaksInternals(t *testing.T) {
 	if raw["code"] != "NOT_FOUND" || raw["detail"] != "User not found" ||
 		raw["resource"] != "user" || raw["instance"] != "/users/42" {
 		t.Errorf("public data missing from body: %s", body)
+	}
+	// Field violations are public data — present, with only Field/Description.
+	if errs, ok := raw["errors"].([]any); !ok || len(errs) != 1 {
+		t.Errorf("errors = %v, want the one violation", raw["errors"])
 	}
 }
 

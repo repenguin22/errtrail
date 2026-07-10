@@ -101,7 +101,11 @@ var TypeURL func(errtrail.Code) string
 //	             or empty if none is set or it equals Title (avoids redundancy)
 //	Code       = errtrail.CodeOf(err).String()
 //	Type       = TypeURL(code) if TypeURL is set, otherwise empty
-//	Extensions = errtrail.PublicFields(err)
+//	Extensions = errtrail.PublicFields(err), plus — when the error carries
+//	             field violations (errtrail.WithFieldViolation) — an "errors"
+//	             member holding them as [{"field", "description"}, ...]. An
+//	             explicit WithPublicField("errors", ...) wins over the derived
+//	             member (explicit beats derived).
 //
 // Options (e.g. Instance) are applied last. Problem responses describe
 // errors; passing a nil err yields a 200 "OK" problem, which is almost
@@ -125,12 +129,24 @@ func From(err error, opts ...Option) Problem {
 		detail = ""
 	}
 
+	extensions := errtrail.PublicFields(err)
+	if vs := errtrail.FieldViolations(err); len(vs) > 0 {
+		if extensions == nil {
+			extensions = make(map[string]any, 1)
+		}
+		// An explicit public field named "errors" wins over the derived
+		// member — explicit beats derived.
+		if _, ok := extensions["errors"]; !ok {
+			extensions["errors"] = vs
+		}
+	}
+
 	p := Problem{
 		Title:      title,
 		Status:     status,
 		Detail:     detail,
 		Code:       code.String(),
-		Extensions: errtrail.PublicFields(err),
+		Extensions: extensions,
 	}
 	if TypeURL != nil {
 		p.Type = TypeURL(code)
