@@ -14,9 +14,14 @@ type Frame struct {
 	Msg      string // The internal msg of the *Error that recorded this frame.
 }
 
-// String returns "Function (File:Line): Msg", omitting ": Msg" when Msg is empty.
+// String returns "Function (File:Line): Msg". It omits ": Msg" when Msg is
+// empty, and " (File:Line)" when both File and Line are zero (an unresolved
+// frame, e.g. from a zero-value Error).
 func (f Frame) String() string {
-	s := f.Function + " (" + f.File + ":" + strconv.Itoa(f.Line) + ")"
+	s := f.Function
+	if f.File != "" || f.Line != 0 {
+		s += " (" + f.File + ":" + strconv.Itoa(f.Line) + ")"
+	}
 	if f.Msg != "" {
 		s += ": " + f.Msg
 	}

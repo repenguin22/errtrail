@@ -17,6 +17,13 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [Unreleased]
+
+- **Fixed** `Frame.String()` no longer renders a bogus `" (:0)"` location for
+  unresolved frames (both `File` and `Line` zero — e.g. the `"unknown"`
+  sentinel a zero-value `Error` resolves to). A frame with either part set
+  still prints the location.
+
 ### [v1.1.3] — 2026-07-11
 
 Documentation and tests only — no code change (external review on v1.1.2).
