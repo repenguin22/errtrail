@@ -459,17 +459,6 @@ no breaking change to the public API or to documented wire/response behavior
 without a major version bump. A minor version may add API surface; a patch is
 fixes only. Behavior changes of any kind are called out in the changelog.
 
-### The road to v1.0 (record)
-
-v1.0 was a promise to keep the settled feature surface stable. The criteria,
-all met before tagging:
-
-- [x] P1 feature set complete (public fields, retryability, gRPC round-trip, OTel)
-- [x] Registry is thread-safe; CI gates per-module coverage
-- [x] The `problem.TypeURL` / `grpcerr.Domain` "set before startup" contract is decided (documented as final — they are plain package variables with no partial-write hazard)
-- [x] gRPC wire-level round-trip test — a real `grpc.Server`/`ClientConn` over bufconn verifies that `ErrorInfo` details survive the actual transport (`grpcerr/e2e_test.go`)
-- [x] Pre-v1.0 semantics fixes from the final review round (2026-07-10, core v0.7.0 / grpcerr v0.5.0): `WithoutPublic()`, tightened `Register` validation, `PublicFields` last-write-wins within a node, the `PublicMessage` code-name fallback, `FromOption`/`TrustedDomain`, and ErrorInfo only for registered codes — every change that would have been breaking after v1.0
-
 ## License
 
 [MIT](LICENSE)
