@@ -3,7 +3,7 @@ module github.com/repenguin22/errtrail/grpcerr
 go 1.25.0
 
 require (
-	github.com/repenguin22/errtrail v1.2.0
+	github.com/repenguin22/errtrail v1.3.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
