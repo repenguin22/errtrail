@@ -395,6 +395,7 @@ func (e *Error) Format(s fmt.State, verb rune)
 | `%s`, `%v` | same as `e.Error()` |
 | `%q` | `strconv.Quote(e.Error())` |
 | `%+v` | the multi-line form below |
+| any other verb | falls back to the `%v` form |
 
 `%+v` output format (implement it exactly as shown):
 
@@ -593,9 +594,11 @@ func FromError(err error, opts ...FromOption) *errtrail.Error
 func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error
 
 // RetryDelay returns the delay carried by the first errdetails.RetryInfo
-// detail on err's gRPC status that holds a POSITIVE delay, reporting
+// detail on err's gRPC status that holds a VALID, POSITIVE delay, reporting
 // whether one was found. (0, false) for nil, non-status errors, statuses
-// without the detail, and RetryInfo whose delay is unset, zero, or negative
+// without the detail, and RetryInfo whose delay is unset, zero, negative, or
+// outside the protobuf Duration range — CheckValid gates AsDuration, which
+// would otherwise silently saturate an out-of-range value to ±292 years
 // ("retry after zero" carries no recommendation; a later RetryInfo with a
 // positive delay still wins). A hint, like IsRetryable — replay safety
 // stays with the caller. FromError deliberately does not turn received

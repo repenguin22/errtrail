@@ -23,6 +23,11 @@ without a major version bump. See
   unresolved frames (both `File` and `Line` zero — e.g. the `"unknown"`
   sentinel a zero-value `Error` resolves to). A frame with either part set
   still prints the location.
+- **Docs** External-review (round 5) drift swept: DESIGN.md §9's `RetryDelay`
+  spec now carries the v1.1.2 CheckValid gate (delays outside the protobuf
+  Duration range are rejected, not saturated); the §6 verb table gains the
+  unknown-verb fallback row; `problem.Write` documents that a panicking
+  `MarshalJSON` on a public field value propagates (matching encoding/json).
 
 ### [v1.1.3] — 2026-07-11
 

@@ -164,7 +164,9 @@ func From(err error, opts ...Option) Problem {
 // Write writes From(err, opts...) to w as application/problem+json. If JSON
 // encoding fails (possible when a public field holds a value
 // encoding/json cannot marshal), it writes a bare 500 and returns that
-// error.
+// error. A panicking MarshalJSON on a public field value is not recovered —
+// it propagates to the caller, matching encoding/json's own behavior;
+// recover in the handler if such values can reach a public field.
 func Write(w http.ResponseWriter, err error, opts ...Option) error {
 	p := From(err, opts...)
 	body, mErr := json.Marshal(p)
