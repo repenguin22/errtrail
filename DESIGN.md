@@ -711,7 +711,7 @@ Design decisions:
 | `LookupPublicMessage` when public is unset | Returns `("", false)` — no fallback of any kind |
 | Code whose HTTP status has no `http.StatusText` (Canceled/499, or a custom non-standard status) with public unset | `PublicMessage`, the gRPC message, and the problem Title all fall back to the code name (`"CANCELED"`) — the library never hands `""` to a client |
 | `errors.Join(a, b)` where both are `*Error` | Depth-first, first branch wins (`CodeOf`/`PublicMessage` take the first hit; `Trace`/`Attrs`/`FieldViolations` collect every branch; `PublicFields` collects every branch but keeps the first branch's value for a duplicate key) |
-| `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields/violations; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. In a Join, a barrier inside one branch never blocks a sibling branch |
+| `WithoutPublic()` on a node | The cause chain below it contributes no public message/fields/violations/retry delay; the node's own public data and outer wraps still apply; internal msg/attrs/trace and `CodeOf` unaffected. A registry `RetryAfter` delay is code configuration, not error data, so it is not blocked. In a Join, a barrier inside one branch never blocks a sibling branch |
 | Field violations (`WithFieldViolation`) | A list, not a map: `FieldViolations` concatenates every layer and Join branch in walk order, nothing deduplicated. Client-visible (problem `"errors"` member, gRPC `BadRequest`), excluded from logs |
 | Using an unregistered custom code | `String()` returns `"CODE(n)"`, HTTP 500, gRPC UNKNOWN (2) |
 | `Register(c < 100, ...)` / duplicate registration | panics |

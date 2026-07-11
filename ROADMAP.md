@@ -208,6 +208,13 @@ on the exported event, which a tracing backend could resolve as
 first/last/array depending on implementation — the attr is now dropped so
 the real code always wins.
 
+Follow-up in core **v1.3.2** (2026-07-11): the v1.3.1 struct-size test
+asserted 144 B unconditionally, failing on 32-bit targets (80 B there —
+hand-computed, no 32-bit CI runner); now branches on pointer size. Three
+more "retry delay" omissions from the channel-enumeration sweep — DESIGN's
+`WithoutPublic` table row, README's "at the source" paragraph, `format.go`'s
+`detailed` comment — caught up.
+
 ## Explicitly rejected (do not revisit without new evidence)
 
 - **Full stack traces (opt-in or otherwise)** — one frame per wrap is the

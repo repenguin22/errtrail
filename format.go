@@ -32,9 +32,10 @@ func (e *Error) Format(s fmt.State, verb rune) {
 }
 
 // detailed builds the multi-line %+v output. It gathers code, public, public
-// fields, attrs, and trace in a single pass (collect) rather than walking the
-// chain once per section. The public line is printed only when a public
-// message was explicitly set — collect never yields a fallback value here.
+// fields, public violations, retry delay, attrs, and trace in a single pass
+// (collect) rather than walking the chain once per section. The public line
+// is printed only when a public message was explicitly set — collect never
+// yields a fallback value here.
 func (e *Error) detailed() string {
 	if e == nil {
 		return "<nil>"

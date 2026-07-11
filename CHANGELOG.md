@@ -17,6 +17,24 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.3.2] — 2026-07-11
+
+Follow-up on the v1.3.1 review-round batch — two spots the sweep still
+missed.
+
+- **Fixed** `TestErrorStructSize` (added in v1.3.1 to pin the 144 B layout
+  fix) asserted 144 unconditionally, failing on any 32-bit target: `uintptr`
+  and slice/string header words are 4 bytes there, and `time.Duration`
+  (`retryDelay`) aligns to 4 rather than 8 — hand-computed and confirmed at
+  80 B for `GOARCH=386` (no 32-bit CI runner to run it on directly, but
+  `go vet`/`go test -c` cross-compile cleanly). The test now branches on
+  `unsafe.Sizeof(uintptr(0))`. Test-only; no library behavior changed on
+  any platform.
+- **Docs** Three more enumerations of the client-visible channels missed
+  the retry delay: DESIGN.md's `WithoutPublic` edge-case-table row, the
+  README "at the source" intro paragraph, and `detailed`'s (`format.go`)
+  internal comment on what `%+v` gathers.
+
 ### [v1.3.1] — 2026-07-11
 
 External review round 7 findings.

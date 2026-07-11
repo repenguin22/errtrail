@@ -341,11 +341,18 @@ func equalStrs(a, b []string) bool {
 func TestErrorStructSize(t *testing.T) {
 	// noPublicBelow is placed right after code (not trailing the struct) so
 	// it fills Code's padding byte instead of adding one, keeping
-	// construction in the 144-byte allocator size class rather than
-	// spilling into the 160-byte one (Round 7 review finding). Pin the raw
-	// size, since a future field reorder or addition could regress it
-	// silently.
-	if got := unsafe.Sizeof(Error{}); got != 144 {
-		t.Errorf("unsafe.Sizeof(Error{}) = %d, want 144", got)
+	// construction in the 144-byte allocator size class on 64-bit platforms
+	// rather than spilling into the 160-byte one (Round 7 review finding).
+	// Pin the raw size, since a future field reorder or addition could
+	// regress it silently. On 32-bit (uintptr = 4 bytes; int64 fields like
+	// retryDelay align to 4, not 8, there) the layout comes out to 80 bytes
+	// instead — a second Round 7 finding on this same test, confirmed by
+	// hand-computing the 386 layout since there's no 32-bit CI runner.
+	want := uintptr(144)
+	if unsafe.Sizeof(uintptr(0)) == 4 {
+		want = 80
+	}
+	if got := unsafe.Sizeof(Error{}); got != want {
+		t.Errorf("unsafe.Sizeof(Error{}) = %d, want %d", got, want)
 	}
 }

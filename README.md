@@ -42,8 +42,9 @@ out of the `Code` for free. The rest of this section walks each layer in turn;
 Where the error originates, attach everything you know in one place: a **`Code`**
 (the classification, and the single source of truth for the HTTP/gRPC status), an
 **internal message** for your own eyes, and — only if a client should see them —
-a **public message**, structured **public fields**, and **field violations**
-for validation failures. `With` adds `slog` attributes that stay in the logs.
+a **public message**, structured **public fields**, **field violations**
+for validation failures, and a **retry delay** for dynamic server pushback.
+`With` adds `slog` attributes that stay in the logs.
 
 ```go
 if row == nil {
