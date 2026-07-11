@@ -109,6 +109,37 @@ func TestRecordServerFault(t *testing.T) {
 	}
 }
 
+func TestRecordDropsUserAttrReservingCodeKey(t *testing.T) {
+	// A With attr sharing the reserved "errtrail.code" key must not
+	// duplicate the taxonomy attribute on the exported event (Round 7
+	// review finding): a tracing backend could apply first-wins,
+	// last-wins, or array semantics, any of which corrupts the one
+	// attribute alerts and dashboards key off of.
+	ctx, span, sr := startSpan(t)
+	err := errtrail.New(errtrail.Internal, "x").With(slog.String("errtrail.code", "SPOOFED"))
+	Record(ctx, err)
+
+	ro := ended(t, sr, span)
+	events := ro.Events()
+	if len(events) != 1 {
+		t.Fatalf("len(Events()) = %d, want 1", len(events))
+	}
+	var matches int
+	var last attribute.Value
+	for _, kv := range events[0].Attributes {
+		if kv.Key == codeKey {
+			matches++
+			last = kv.Value
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("errtrail.code appears %d times, want exactly 1", matches)
+	}
+	if last.AsString() != "INTERNAL" {
+		t.Errorf("errtrail.code = %q, want the real code INTERNAL, not the spoofed attr", last.AsString())
+	}
+}
+
 func TestRecordClientFaultLeavesStatusUnset(t *testing.T) {
 	ctx, span, sr := startSpan(t)
 

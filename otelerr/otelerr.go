@@ -9,6 +9,13 @@
 // response generation). Span attributes are exported to your own tracing
 // backend and never propagate on the wire — only the trace context IDs do.
 //
+// "errtrail.code" is a reserved attribute key carrying the taxonomy code
+// name. A With attr sharing that key is dropped rather than exported
+// alongside it — letting both through would leave a tracing backend to
+// arbitrate a duplicate key (first-wins, last-wins, or an array, depending
+// on the backend), silently corrupting the one attribute alerts and
+// dashboards key off of.
+//
 // The span status follows the OpenTelemetry gRPC semantic conventions for
 // server spans: only server-fault codes (Unknown, DeadlineExceeded,
 // Unimplemented, Internal, Unavailable, DataLoss) set the status to Error;
@@ -48,6 +55,11 @@ func RecordSpan(span trace.Span, err error) {
 	code := errtrail.CodeOf(err)
 	attrs := []attribute.KeyValue{codeKey.String(code.String())}
 	for _, a := range errtrail.Attrs(err) {
+		if a.Key == string(codeKey) {
+			// Reserved: a user attr sharing this key must not duplicate or
+			// shadow the taxonomy attribute exporters and backends see.
+			continue
+		}
 		attrs = append(attrs, otelAttr(a))
 	}
 	span.RecordError(err, trace.WithAttributes(attrs...))
