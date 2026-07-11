@@ -1,6 +1,7 @@
 package errtrail
 
 import (
+	"math"
 	"runtime"
 	"strconv"
 )
@@ -34,6 +35,14 @@ func (f Frame) String() string {
 // directly from the constructors, since the base skip count assumes exactly
 // that call depth.
 func caller(skip int) uintptr {
+	// A skip large enough that 3+skip overflows int would otherwise wrap to
+	// a small (or negative) value and runtime.Callers would happily record
+	// some unrelated frame near the top of the stack — the "unknown"
+	// fallback exists precisely to avoid recording a bogus frame, so an
+	// oversized skip must hit it too.
+	if skip > math.MaxInt-3 {
+		return 0
+	}
 	var pcs [1]uintptr
 	// Skip 3 frames: runtime.Callers, caller, and the constructor itself,
 	// leaving the user's own call site; skip walks further up from there.

@@ -429,16 +429,16 @@ mid-request.
 
 ## Benchmarks
 
-Apple M1 Pro, Go 1.26, as of v1.3. `New` / `Wrap` are still 1 alloc each,
-including frame recording (the struct grew with v1.1's field-violation and
-barrier support and again with v1.3's retry delay — hence 160 B, up from
-144 B in v1.1 and 96 B pre-v1.1).
+Apple M1 Pro, Go 1.26, as of v1.3. `New` / `Wrap` are still 1 alloc each, at
+144 B — the same allocator size class as v1.1, despite v1.3 adding a retry
+delay field: `noPublicBelow` sits right after `Code` in the struct, filling
+its padding byte instead of costing one at the end (96 B pre-v1.1).
 
 ```
-BenchmarkNew-10           7292650    156.3 ns/op    160 B/op   1 allocs/op
-BenchmarkWrap-10          7819641    156.0 ns/op    160 B/op   1 allocs/op
-BenchmarkWrapChain3-10    2377813    497.9 ns/op    480 B/op   3 allocs/op
-BenchmarkFormatPlusV-10    810685   1565   ns/op   3489 B/op  25 allocs/op
+BenchmarkNew-10           7068086    160.8 ns/op    144 B/op   1 allocs/op
+BenchmarkWrap-10          7298881    158.1 ns/op    144 B/op   1 allocs/op
+BenchmarkWrapChain3-10    2369467    497.3 ns/op    432 B/op   3 allocs/op
+BenchmarkFormatPlusV-10    800520   1428   ns/op   3489 B/op  25 allocs/op
 ```
 
 ## Versioning and stability

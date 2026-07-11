@@ -17,6 +17,27 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [v1.3.1] — 2026-07-11
+
+External review round 7 findings.
+
+- **Fixed** `NewSkip` / `WrapSkip` with a `skip` large enough that `3+skip`
+  overflows `int` (e.g. `math.MaxInt`) recorded a bogus frame near the top
+  of the call stack instead of the documented "unknown" fallback for a skip
+  past the stack top. `caller` now guards the overflow explicitly.
+- **Changed** `Error`'s allocation drops back to 144 B (was 160 B since
+  v1.3.0): `noPublicBelow` moved right after `code` in the struct, filling
+  its padding byte instead of adding one at the end. Pure layout — no
+  behavior or API change. Pinned by a struct-size test; README/doc.go
+  benchmarks and cost notes updated.
+- **Changed** `LogValue` no longer costs allocations for public fields and
+  field violations it never emits — `collect`'s internal signature gained
+  an `includePublic` flag, `false` for `LogValue`, `true` for `%+v`. Same
+  chain-walk count, just fewer discarded slices.
+- **Docs** The "exactly three channels" wording missed by the v1.3.0 sweep
+  — `doc.go`'s package-overview bullet, `DESIGN.md`'s header/struct
+  sketch/test-plan lines, and an `inspect_test.go` comment — now says four.
+
 ### [v1.3.0] — 2026-07-11
 
 Additive API only — no behavior change for existing code; construction
@@ -449,6 +470,18 @@ Additive only (ROADMAP §3). Requires core **v1.1.0**.
 ---
 
 ## errtrail/otelerr — `github.com/repenguin22/errtrail/otelerr`
+
+### [otelerr/v1.0.1] — 2026-07-11
+
+External review round 7 finding.
+
+- **Fixed** `RecordSpan` no longer lets a `With` attr sharing the reserved
+  `"errtrail.code"` key duplicate the taxonomy attribute on the exported
+  exception event. A duplicate key's resolution (first-wins, last-wins, or
+  an array) varies by tracing backend — an accidental or hostile attr named
+  `errtrail.code` could silently corrupt the one attribute alerts and
+  dashboards key off of. The attr is now dropped; the real code always
+  wins. No core requirement change.
 
 ### [otelerr/v1.0.0] — 2026-07-11
 

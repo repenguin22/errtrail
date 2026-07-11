@@ -247,15 +247,20 @@ type collected struct {
 	retryDelay time.Duration    // first per-error retry delay, 0 if none (matches LookupRetryDelay)
 }
 
-// collect walks err's chain once, gathering the resolved code, the first
-// public message, the full trace, all attrs, and all public fields. The code
-// and public results match CodeOf and the "no fallback" public lookup —
-// including the WithoutPublic barrier, so the %+v / LogValue public lines
-// show what a client can actually see; trace and attrs match Trace and Attrs
-// (never blocked). fields keeps duplicates in walk order — display-only,
-// unlike PublicFields' outermost-wins map. It exists so the formatter and
-// logger don't walk the chain several times over.
-func collect(err error) collected {
+// collect walks err's chain once, gathering the resolved code, the full
+// trace, and all attrs — plus, when includePublic is true, the first public
+// message, all public fields, all field violations, and the first retry
+// delay. The code and public results match CodeOf and the "no fallback"
+// public lookup — including the WithoutPublic barrier, so the %+v public
+// lines show what a client can actually see; trace and attrs match Trace
+// and Attrs (never blocked). fields keeps duplicates in walk order —
+// display-only, unlike PublicFields' outermost-wins map.
+//
+// includePublic is false for LogValue, which never emits any public data:
+// gathering it there would cost allocations (the fields/violations slices)
+// for values the caller immediately discards. It exists so the formatter
+// and logger don't walk the chain several times over.
+func collect(err error, includePublic bool) collected {
 	c := collected{code: Unknown}
 	haveCode := false
 	walk(err, func(e *Error, blocked bool) bool {
@@ -263,7 +268,7 @@ func collect(err error) collected {
 			c.code = e.code
 			haveCode = true
 		}
-		if !blocked {
+		if includePublic && !blocked {
 			if c.public == "" && e.public != "" {
 				c.public = e.public
 			}

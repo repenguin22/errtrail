@@ -39,7 +39,7 @@ func (e *Error) detailed() string {
 	if e == nil {
 		return "<nil>"
 	}
-	c := collect(e)
+	c := collect(e, true)
 	var b strings.Builder
 
 	b.WriteString(e.Error())

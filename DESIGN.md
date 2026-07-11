@@ -2,7 +2,7 @@
 
 A Go error library for web services (HTTP / gRPC).
 
-- Status: Living document — current as of v1.1
+- Status: Living document — current as of v1.3
 - Module: `github.com/repenguin22/errtrail`
 - Go: 1.22+ (1.21 is the floor imposed by `log/slog`; development targets 1.22)
 
@@ -187,7 +187,16 @@ func Register(c Code, name string, httpStatus int, grpcCode uint32, opts ...Regi
 
 ```go
 type Error struct {
-    code       Code             // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+    code Code // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+
+    // noPublicBelow marks this node as a public-data barrier (WithoutPublic):
+    // the cause chain below it contributes no public message, fields,
+    // violations, or retry delay. Placed here (not trailing the struct) so
+    // it fills Code's padding byte instead of adding one — keeps Error at
+    // 144 bytes despite v1.3's added retryDelay field. Layout only, no
+    // behavioral effect.
+    noPublicBelow bool
+
     msg        string           // Internal message (for logs). Never shown to a client.
     public     string           // Public message shown to clients. Empty means unset.
     cause      error            // The wrapped error. May be nil.
@@ -195,11 +204,7 @@ type Error struct {
     attrs      []slog.Attr      // Structured-logging attributes (internal, logs only).
     fields     []publicField    // Public extension fields (client-visible).
     violations []FieldViolation // Field-level validation violations (client-visible).
-
-    // noPublicBelow marks this node as a public-data barrier (WithoutPublic):
-    // the cause chain below it contributes no public message, fields, or
-    // violations.
-    noPublicBelow bool
+    retryDelay time.Duration    // Per-error retry delay (client-visible). 0 means "unset".
 }
 ```
 
@@ -718,9 +723,9 @@ Design decisions:
 
 - **code_test.go**: table test covering all 17 built-in codes' mapping (HTTP/gRPC/String). Register's success, boundary, and panic paths — including the v1.1 `RetryAfter` option (retryable implication, `RetryDelay` accessor, non-positive panic).
 - **error_test.go**: immutability of New/Wrap/builders (the original Error is never mutated; attrs, fields, and violations slices never share appendable capacity). Every nil-safety case. `errors.Is/As/Unwrap` compatibility (including mixed chains with the standard `%w`).
-- **inspect_test.go**: covers every row of the edge-case table above. Walk order including `errors.Join`. `WithoutPublic` barrier placement (own node, fresh Wrap, Join positions) across all three public channels; `FieldViolations` concatenation.
+- **inspect_test.go**: covers every row of the edge-case table above. Walk order including `errors.Join`. `WithoutPublic` barrier placement (own node, fresh Wrap, Join positions) across all four public channels; `FieldViolations` concatenation.
 - **format_test.go**: compares `%s` / `%v` / `%q` / `%+v` output against golden strings (file/line matched via regex), including the `public.fields:` / `public.violations:` lines and their omission below a barrier.
-- **slog_test.go**: verifies actual JSON output via `slog.NewJSONHandler` plus a buffer; asserts the three public channels never appear in logs.
+- **slog_test.go**: verifies actual JSON output via `slog.NewJSONHandler` plus a buffer; asserts the four public channels never appear in logs.
 - **problem_test.go**: verifies Content-Type / status / body via `httptest.ResponseRecorder`. Omission when Detail==Title. The derived `"errors"` member, the explicit-override rule (incl. nil), the barrier, and an adversarial serialized-body no-leak test.
 - **grpcerr/grpcerr_test.go + e2e_test.go**: status conversion; gRPC mapping for a custom code; ErrorInfo/RetryInfo/BadRequest attach conditions and order; `TrustedDomain`; `RetryDelay` (positive-only); barrier; a bufconn wire round-trip for all three details.
 - **Benchmarks** (bench_test.go): `New`, `Wrap`, building a 3-deep `Wrap` chain, `%+v` formatting. `New` targets roughly 1 alloc; `-benchmem` results are recorded in the README for regression detection.

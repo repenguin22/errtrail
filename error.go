@@ -13,7 +13,22 @@ import (
 // copies, so a single *Error can be safely shared and derived from across
 // goroutines.
 type Error struct {
-	code       Code             // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+	code Code // Zero value OK means "unset"; CodeOf delegates to the inner Error.
+
+	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
+	// the cause chain below it contributes no public message, no public
+	// fields, no field violations, and no retry delay. This node's own
+	// public data — and anything added by an outer wrap — still applies;
+	// internal msg, attrs, and trace are unaffected.
+	//
+	// Placed right after code (rather than trailing the struct) so it fills
+	// the padding byte after Code's 4 bytes instead of adding one: this
+	// keeps Error at 144 bytes, its v1.1 size, despite v1.3's added
+	// retryDelay field — one Go allocator size class lower than the 160
+	// bytes a trailing bool would cost. Purely a layout choice; it has no
+	// effect on behavior or the public API.
+	noPublicBelow bool
+
 	msg        string           // Internal message (for logs). Never shown to a client.
 	public     string           // Public message shown to clients. Empty means unset.
 	cause      error            // The wrapped error. May be nil.
@@ -22,13 +37,6 @@ type Error struct {
 	fields     []publicField    // Public extension fields (client-visible).
 	violations []FieldViolation // Field-level validation violations (client-visible).
 	retryDelay time.Duration    // Per-error retry delay (client-visible). 0 means "unset".
-
-	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
-	// the cause chain below it contributes no public message, no public
-	// fields, and no field violations. This node's own public data — and
-	// anything added by an outer wrap — still applies; internal msg, attrs,
-	// and trace are unaffected.
-	noPublicBelow bool
 }
 
 // publicField is one client-visible key-value pair attached via

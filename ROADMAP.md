@@ -189,6 +189,25 @@ shows the two-line handler pattern via `LookupRetryDelay` instead. A
 registry delay is code configuration, not error data: it is not blocked by
 the barrier.
 
+### 6. Round 7 external review fixes — SHIPPED
+
+Shipped as core **v1.3.1** and otelerr **v1.0.1** (2026-07-11; all 5
+confirmed findings, no false positives this round): `caller`'s `3+skip`
+integer overflow at `skip` near `math.MaxInt` recorded a bogus frame instead
+of the documented "unknown" fallback — now guarded explicitly. `Error`'s
+allocation regressed to 160 B when v1.3.0 added `retryDelay`; reordering
+`noPublicBelow` to fill `code`'s padding byte (rather than trailing the
+struct) recovers the 144 B size class with no behavior change. `LogValue`
+was paying allocations for public fields/violations it never emits;
+`collect` gained an internal `includePublic` flag. The v1.3.0 doc sweep for
+"three channels" -> "four channels" missed a few spots (`doc.go`'s
+package-overview bullet, DESIGN.md's header/struct sketch/test-plan lines,
+one test comment) — now caught up. `otelerr.RecordSpan` let a `With` attr
+literally named `"errtrail.code"` duplicate the reserved taxonomy attribute
+on the exported event, which a tracing backend could resolve as
+first/last/array depending on implementation — the attr is now dropped so
+the real code always wins.
+
 ## Explicitly rejected (do not revisit without new evidence)
 
 - **Full stack traces (opt-in or otherwise)** — one frame per wrap is the

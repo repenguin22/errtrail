@@ -444,7 +444,7 @@ func TestWithoutPublicOnOriginalNodeKeepsOwnData(t *testing.T) {
 		t.Errorf("FieldViolations = %v, want the node's own violation", got)
 	}
 
-	// The documented form — a fresh Wrap — blocks all three channels.
+	// The documented form — a fresh Wrap — blocks all four channels.
 	proper := Wrap(orig, "reclassify").WithCode(PermissionDenied).WithoutPublic()
 	if msg, ok := LookupPublicMessage(proper); ok {
 		t.Errorf("LookupPublicMessage = %q, want blocked", msg)

@@ -18,7 +18,7 @@ func (e *Error) LogValue() slog.Value {
 	}
 
 	// Gather code, trace, and attrs in one pass instead of three walks.
-	c := collect(e)
+	c := collect(e, false)
 	traceStrs := make([]string, len(c.trace))
 	for i, f := range c.trace {
 		traceStrs[i] = f.String()

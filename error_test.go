@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestNewAndError(t *testing.T) {
@@ -123,6 +125,18 @@ func TestSkipNegativePanics(t *testing.T) {
 func TestSkipPastStackTopRecordsUnknown(t *testing.T) {
 	if fn := Trace(NewSkip(1000, Internal, "x"))[0].Function; fn != "unknown" {
 		t.Errorf("Function = %q, want unknown", fn)
+	}
+}
+
+func TestSkipOverflowRecordsUnknown(t *testing.T) {
+	// A skip large enough that 3+skip overflows int must still hit the
+	// documented "unknown" fallback, not wrap around into a bogus frame
+	// somewhere near the top of the stack (Round 7 review finding).
+	if fn := Trace(NewSkip(math.MaxInt, Internal, "x"))[0].Function; fn != "unknown" {
+		t.Errorf("NewSkip(MaxInt) Function = %q, want unknown", fn)
+	}
+	if fn := Trace(WrapSkip(math.MaxInt, errors.New("x"), "y"))[0].Function; fn != "unknown" {
+		t.Errorf("WrapSkip(MaxInt) Function = %q, want unknown", fn)
 	}
 }
 
@@ -322,4 +336,16 @@ func equalStrs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestErrorStructSize(t *testing.T) {
+	// noPublicBelow is placed right after code (not trailing the struct) so
+	// it fills Code's padding byte instead of adding one, keeping
+	// construction in the 144-byte allocator size class rather than
+	// spilling into the 160-byte one (Round 7 review finding). Pin the raw
+	// size, since a future field reorder or addition could regress it
+	// silently.
+	if got := unsafe.Sizeof(Error{}); got != 144 {
+		t.Errorf("unsafe.Sizeof(Error{}) = %d, want 144", got)
+	}
 }

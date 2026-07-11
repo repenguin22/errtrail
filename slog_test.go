@@ -58,6 +58,24 @@ func TestLogValueJSON(t *testing.T) {
 	}
 }
 
+func TestLogValueDoesNotCollectPublicData(t *testing.T) {
+	// LogValue never emits public fields or violations (see the LogValue
+	// doc), so collecting them costs allocations for values immediately
+	// discarded. Round 7 review finding: pin that a public-data-heavy
+	// error costs no more allocations than a plain one.
+	plain := New(Internal, "x")
+	loaded := New(Internal, "x")
+	for i := 0; i < 8; i++ {
+		loaded = loaded.WithPublicField("f", i).WithFieldViolation("v", "bad")
+	}
+
+	n1 := testing.AllocsPerRun(50, func() { _ = plain.LogValue() })
+	n2 := testing.AllocsPerRun(50, func() { _ = loaded.LogValue() })
+	if n1 != n2 {
+		t.Errorf("LogValue allocs: plain=%v loaded=%v, want equal (public data must not be collected)", n1, n2)
+	}
+}
+
 func TestLogValueNil(t *testing.T) {
 	var e *Error
 	if !e.LogValue().Equal(slog.Value{}) {
