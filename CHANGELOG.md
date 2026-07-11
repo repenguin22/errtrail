@@ -229,6 +229,13 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
+### [Unreleased]
+
+- **Changed** `FromStatus` guards `nil` explicitly instead of relying on
+  grpc's undocumented nil-receiver behavior of `Status.Err`/`Code`/`Details`.
+  Behavior is unchanged (`nil` still returns `nil`, pinned by an existing
+  test); the nil safety is now self-contained.
+
 ### [grpcerr/v1.1.2] — 2026-07-11
 
 - **Fixed** `RetryDelay` rejects a `RetryInfo` whose delay is outside the

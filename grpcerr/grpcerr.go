@@ -179,9 +179,15 @@ func FromError(err error, opts ...FromOption) *errtrail.Error {
 }
 
 // FromStatus is FromError for a *status.Status you already hold. Returns
-// nil when st is nil or its code is OK (st.Err() is nil in both cases) —
+// nil when st is nil or its code is OK (st.Err() is nil for an OK status) —
 // the typed-nil caveat on FromError applies here too.
 func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error {
+	// Explicit guard rather than relying on grpc's nil-receiver behavior of
+	// Status.Err/Code/Details — that is an implementation detail, not a
+	// documented guarantee.
+	if st == nil {
+		return nil
+	}
 	return errtrail.Wrap(st.Err(), "").WithCode(codeFromStatus(st, foldFromOptions(opts)))
 }
 
