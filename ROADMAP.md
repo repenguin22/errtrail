@@ -174,4 +174,7 @@ Candidates only — not scheduled; adopt when a concrete use case shows up.
 - **Merging `ToStatus`'s three chain walks (exporting core's `collect`)** —
   `collect` resolves frames as it walks, so one collect pass costs more than
   the three cheap targeted walks it would replace; boundary code runs once
-  per response, where three walks are harmless.
+  per response, where three walks are harmless. The same reasoning covers
+  `problem.From`'s four walks and `otelerr.Record`'s three — and `From`
+  additionally needs `PublicFields`' outermost-wins merge, which `collect`'s
+  raw field list does not provide.
