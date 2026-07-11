@@ -171,3 +171,7 @@ Candidates only — not scheduled; adopt when a concrete use case shows up.
   (`problem.Write` / `grpcerr.ToError`); shipping middleware would drag in
   framework opinions the core deliberately avoids.
 - **i18n of public messages** — belongs in the application layer.
+- **Merging `ToStatus`'s three chain walks (exporting core's `collect`)** —
+  `collect` resolves frames as it walks, so one collect pass costs more than
+  the three cheap targeted walks it would replace; boundary code runs once
+  per response, where three walks are harmless.
