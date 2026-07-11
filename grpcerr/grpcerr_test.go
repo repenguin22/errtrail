@@ -466,6 +466,37 @@ func TestToStatusPoisonedViolationKeepsTaxonomy(t *testing.T) {
 	}
 }
 
+func TestToStatusPoisonedMessageBreaksTransportMarshal(t *testing.T) {
+	// A poisoned public MESSAGE sits outside the per-detail isolation: the
+	// details attach in-process, but the Status proto itself no longer
+	// marshals — the transport then silently drops the whole
+	// grpc-status-details-bin trailer (verified over bufconn: the client
+	// receives code+message and zero details; only grpclog sees the
+	// failure). Pin both halves of the mechanism so a grpc-go or protobuf
+	// change that alters either is noticed.
+	registerThrottled()
+	setDomain(t, "errtrail.test")
+	err := errtrail.New(throttled, "internal").
+		WithPublic("invalid name: "+string([]byte{0xff, 0xfe})).
+		WithFieldViolation("name", "must be valid")
+
+	st := ToStatus(err)
+	if n := len(st.Details()); n != 3 {
+		t.Fatalf("in-process len(Details) = %d, want 3 (attach is unaffected by the message)", n)
+	}
+	if _, mErr := proto.Marshal(st.Proto()); mErr == nil {
+		t.Error("proto.Marshal(st.Proto()) succeeded; expected the invalid-UTF-8 failure the transport hits")
+	}
+
+	// Control: the identical shape with a clean message marshals fine.
+	clean := errtrail.New(throttled, "internal").
+		WithPublic("invalid name").
+		WithFieldViolation("name", "must be valid")
+	if _, mErr := proto.Marshal(ToStatus(clean).Proto()); mErr != nil {
+		t.Errorf("control proto.Marshal failed: %v", mErr)
+	}
+}
+
 const throttled errtrail.Code = 150
 
 var registerThrottledOnce sync.Once

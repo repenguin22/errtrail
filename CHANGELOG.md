@@ -17,6 +17,13 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [Unreleased]
+
+- **Docs** External review round 6: `problem.Write` notes that invalid UTF-8
+  in public strings is replaced with U+FFFD by encoding/json itself (the HTTP
+  boundary tolerates bytes the gRPC transport refuses); DESIGN.md §9 carries
+  the poisoned-message caveat recorded in grpcerr's entry below.
+
 ### [v1.1.4] — 2026-07-11
 
 A display fix plus review-round docs and tests (Gemini finding 3; external
@@ -233,6 +240,24 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [Unreleased]
+
+- **Docs** External review round 6 (measured over bufconn): an invalid-UTF-8
+  **public message** sits outside v1.1.4's per-detail isolation — it lives on
+  the Status proto itself, so the transport cannot marshal the
+  grpc-status-details-bin trailer and the client receives code+message but
+  **zero details** (custom-code recovery degrades to the numeric wire code;
+  only grpclog sees the failure). `ToStatus` documents the hazard and the
+  `utf8.ValidString` guidance; `FromError` warns that the wire message can
+  carry raw non-UTF-8 bytes, so echoing it unvalidated into `WithPublic`
+  poisons your own response's details. Guarding it in code was considered
+  and rejected (ROADMAP): the trailer is the transport's to build, and
+  rewriting the message would be silent mutation.
+- **Tests** A standing test pins both halves of the mechanism: the
+  in-process attach succeeds (3 details) while `proto.Marshal(st.Proto())`
+  fails on the poisoned message — so a grpc-go/protobuf change altering
+  either half is noticed.
 
 ### [grpcerr/v1.1.4] — 2026-07-11
 

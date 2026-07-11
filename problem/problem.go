@@ -166,7 +166,10 @@ func From(err error, opts ...Option) Problem {
 // encoding/json cannot marshal), it writes a bare 500 and returns that
 // error. A panicking MarshalJSON on a public field value is not recovered —
 // it propagates to the caller, matching encoding/json's own behavior;
-// recover in the handler if such values can reach a public field.
+// recover in the handler if such values can reach a public field. Invalid
+// UTF-8 in public strings is replaced with U+FFFD by the encoder itself
+// (encoding/json's documented behavior, not a rewrite by this package), so
+// the HTTP boundary tolerates bytes the gRPC transport refuses.
 func Write(w http.ResponseWriter, err error, opts ...Option) error {
 	p := From(err, opts...)
 	body, mErr := json.Marshal(p)

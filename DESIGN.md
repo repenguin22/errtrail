@@ -567,7 +567,11 @@ var Domain string
 // BadRequest; errors without that data keep the plain wire format. If a
 // detail cannot be attached (a proto marshal failure — e.g. invalid UTF-8
 // in a user-derived violation string), only that detail is dropped; the
-// others and the status itself survive.
+// others and the status itself survive. The public message sits outside
+// that isolation: invalid UTF-8 there poisons the Status proto itself, so
+// the transport drops the whole details trailer (client gets code+message,
+// zero details; only grpclog sees it) — validate before echoing user input
+// into WithPublic.
 // Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 

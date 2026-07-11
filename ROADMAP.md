@@ -182,7 +182,12 @@ Candidates only — not scheduled; adopt when a concrete use case shows up.
   library never silently rewrites client-visible data, and size is the
   transport's budget (metadata limits kill oversized trailers long before
   proto's ~2GB marshal ceiling; a library-side cap would be a guess about
-  someone else's deployment). The failure mode that is actually reachable —
-  a proto-unmarshalable detail, e.g. invalid UTF-8 echoed into a field
-  violation — is handled by per-detail isolation in `withDetails` instead:
-  a poisoned detail costs only itself, never the taxonomy round trip.
+  someone else's deployment). Two failure modes are actually reachable, and
+  both stay handled without mutation: a proto-unmarshalable detail (invalid
+  UTF-8 echoed into a field violation) is isolated per-detail in
+  `withDetails` — a poisoned detail costs only itself; an invalid-UTF-8
+  public MESSAGE poisons the Status proto itself, so the transport drops the
+  whole details trailer — that one is documented (ToStatus / FromError godoc,
+  standing marshal test) rather than guarded, because the trailer is the
+  transport's to build and rewriting the message would be the same silent
+  mutation this entry rejects.

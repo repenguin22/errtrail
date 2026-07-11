@@ -51,6 +51,13 @@ var Domain string
 // marshal failure — e.g. invalid UTF-8 in a user-derived violation string),
 // only that detail is dropped; the others and the status itself survive.
 //
+// The public MESSAGE sits outside that isolation: it lives on the Status
+// proto itself, and invalid UTF-8 there makes the transport unable to
+// marshal the grpc-status-details-bin trailer — the client receives the
+// code and message but ZERO details, and only grpclog sees the failure
+// (the application gets no signal). Validate with utf8.ValidString before
+// echoing user input into WithPublic.
+//
 // Returns status.New(codes.OK, "") when err is nil. Never includes the
 // internal message, attrs, or trace. Callers who need other details can
 // still call WithDetails on the returned status themselves.
@@ -173,7 +180,10 @@ func TrustedDomain(domains ...string) FromOption {
 //
 // The wire message survives as the internal message via the wrapped cause;
 // it is NOT set as the public message (call WithPublic explicitly to
-// propagate it to your own clients). For the same reason received details
+// propagate it to your own clients — but note the wire message can carry
+// raw non-UTF-8 bytes, which grpc-message percent-decoding restores;
+// echoing it unvalidated into WithPublic poisons your own response's
+// details, see ToStatus). For the same reason received details
 // are not turned back into public data on the returned error — a
 // downstream's BadRequest violations are its clients' business, not
 // automatically yours; read a RetryInfo delay with RetryDelay. The recorded
