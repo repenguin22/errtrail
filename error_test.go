@@ -52,6 +52,17 @@ func TestWrapNilReturnsNil(t *testing.T) {
 	}
 }
 
+func TestWrapfFormatsMessage(t *testing.T) {
+	base := errors.New("boom")
+	e := Wrapf(base, "attempt %d", 3)
+	if got := e.Error(); got != "attempt 3: boom" {
+		t.Errorf("Error() = %q, want %q", got, "attempt 3: boom")
+	}
+	if !errors.Is(e, base) {
+		t.Error("errors.Is should find base through Unwrap")
+	}
+}
+
 func TestUnwrapAndErrorsIs(t *testing.T) {
 	sentinel := errors.New("sentinel")
 	e := Wrap(sentinel, "layer")

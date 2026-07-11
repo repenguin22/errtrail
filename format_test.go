@@ -27,6 +27,20 @@ func TestFormatQ(t *testing.T) {
 	}
 }
 
+func TestFormatUnknownVerbFallsBackToV(t *testing.T) {
+	e := Wrap(errors.New("sql: no rows"), "query user")
+	want := "query user: sql: no rows"
+	if got := fmt.Sprintf("%x", e); got != want {
+		t.Errorf("%%x = %q, want the %%v form %q", got, want)
+	}
+}
+
+func TestFormatNilReceiver(t *testing.T) {
+	if got := fmt.Sprintf("%+v", (*Error)(nil)); got != "<nil>" {
+		t.Errorf("%%+v on nil = %q, want %q", got, "<nil>")
+	}
+}
+
 func TestFormatPlusV(t *testing.T) {
 	inner := New(NotFound, "query user").WithPublic("User not found").
 		WithPublicField("resource", "user")

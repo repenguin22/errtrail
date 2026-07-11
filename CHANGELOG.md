@@ -28,6 +28,8 @@ without a major version bump. See
   Duration range are rejected, not saturated); the §6 verb table gains the
   unknown-verb fallback row; `problem.Write` documents that a panicking
   `MarshalJSON` on a public field value propagates (matching encoding/json).
+- **Tests** Previously uncovered branches pinned: `%+v` on a nil `*Error`
+  (`"<nil>"`), the unknown-verb `%v` fallback, and `Wrapf`'s non-nil path.
 
 ### [v1.1.3] — 2026-07-11
 
