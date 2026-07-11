@@ -540,6 +540,56 @@ func TestRetryInfoAttachedForRetryAfterCode(t *testing.T) {
 	}
 }
 
+// retryInfoOf extracts the single RetryInfo detail from st, failing the
+// test if the details look otherwise unexpected.
+func retryInfoOf(t *testing.T, st *status.Status) *errdetails.RetryInfo {
+	t.Helper()
+	details := st.Details()
+	if len(details) != 1 {
+		t.Fatalf("len(Details) = %d, want 1 (RetryInfo only)", len(details))
+	}
+	info, ok := details[0].(*errdetails.RetryInfo)
+	if !ok {
+		t.Fatalf("details[0] = %T, want *errdetails.RetryInfo", details[0])
+	}
+	return info
+}
+
+func TestRetryInfoPrefersErrorDelay(t *testing.T) {
+	registerThrottled() // static RetryAfter(2s)
+	// Dynamic pushback: the error's own delay (WithRetryDelay) wins over
+	// the code's registered static delay, and only one RetryInfo ships.
+	st := ToStatus(errtrail.New(throttled, "bucket empty").WithRetryDelay(37 * time.Second))
+	if got := retryInfoOf(t, st).GetRetryDelay().AsDuration(); got != 37*time.Second {
+		t.Errorf("RetryDelay = %v, want the error's 37s over the registry's 2s", got)
+	}
+}
+
+func TestRetryInfoFromErrorDelayAlone(t *testing.T) {
+	// A code with no registered delay — and not even retryable — still
+	// ships the error's explicit delay: explicit beats derived, and
+	// IsRetryable stays code-derived either way.
+	st := ToStatus(errtrail.New(errtrail.Internal, "x").WithRetryDelay(3 * time.Second))
+	if got := retryInfoOf(t, st).GetRetryDelay().AsDuration(); got != 3*time.Second {
+		t.Errorf("RetryDelay = %v, want 3s", got)
+	}
+	if d, ok := RetryDelay(st.Err()); !ok || d != 3*time.Second {
+		t.Errorf("client RetryDelay = (%v, %v), want (3s, true)", d, ok)
+	}
+}
+
+func TestRetryInfoBarrierFallsBackToRegistry(t *testing.T) {
+	registerThrottled()
+	// A delay carried by the error below a WithoutPublic barrier is not
+	// exposed; the registry's static delay is code configuration, not error
+	// data, and still applies.
+	inner := errtrail.New(throttled, "bucket empty").WithRetryDelay(37 * time.Second)
+	st := ToStatus(errtrail.Wrap(inner, "reclassify").WithoutPublic())
+	if got := retryInfoOf(t, st).GetRetryDelay().AsDuration(); got != 2*time.Second {
+		t.Errorf("RetryDelay = %v, want the registry's 2s (error delay blocked)", got)
+	}
+}
+
 func TestNoRetryInfoWithoutDelay(t *testing.T) {
 	registerRateLimited() // retryable-capable custom code, but no RetryAfter
 	if n := len(ToStatus(errtrail.New(rateLimited, "x")).Details()); n != 0 {

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"time"
 )
 
 // Error is errtrail's core error type. It is immutable — there is no API to
@@ -20,6 +21,7 @@ type Error struct {
 	attrs      []slog.Attr      // Structured-logging attributes (internal, logs only).
 	fields     []publicField    // Public extension fields (client-visible).
 	violations []FieldViolation // Field-level validation violations (client-visible).
+	retryDelay time.Duration    // Per-error retry delay (client-visible). 0 means "unset".
 
 	// noPublicBelow marks this node as a public-data barrier (WithoutPublic):
 	// the cause chain below it contributes no public message, no public
@@ -140,12 +142,15 @@ func (e *Error) WithPublic(msg string) *Error {
 }
 
 // WithoutPublic returns a copy that acts as a public-data barrier: the cause
-// chain below this node contributes no public message, no public fields, and
-// no field violations to LookupPublicMessage, PublicMessage, PublicFields,
-// FieldViolations, or anything built on them (problem responses, gRPC status
-// messages and details). This node's own public data — and anything added by
-// an outer wrap — still applies, and the internal message, attrs, and trace
-// are unaffected. Does not record a new frame.
+// chain below this node contributes no public message, no public fields, no
+// field violations, and no retry delay to LookupPublicMessage,
+// PublicMessage, PublicFields, FieldViolations, LookupRetryDelay, or
+// anything built on them (problem responses, gRPC status messages and
+// details). This node's own public data — and anything added by an outer
+// wrap — still applies, and the internal message, attrs, and trace are
+// unaffected. A delay registered on the Code with errtrail.RetryAfter is
+// registry configuration, not error data, and is not blocked. Does not
+// record a new frame.
 //
 // Use it when reclassifying an error whose original public data must not
 // reach the client through the new response. For example, converting a
@@ -160,13 +165,14 @@ func (e *Error) WithPublic(msg string) *Error {
 //	    WithPublic("Forbidden") // optional: the new public message, set above the barrier
 //
 // The barrier blocks only the chain below the node, so chaining WithPublic /
-// WithPublicField / WithFieldViolation before or after WithoutPublic on the
-// same node makes no difference — all operate on the node itself.
+// WithPublicField / WithFieldViolation / WithRetryDelay before or after
+// WithoutPublic on the same node makes no difference — all operate on the
+// node itself.
 //
 // For the same reason, call WithoutPublic on a fresh Wrap of the error — as
 // in the example above — NOT on the error value itself: err.WithoutPublic()
-// leaves err's own public message, fields, and violations above the barrier,
-// still visible to clients.
+// leaves err's own public message, fields, violations, and retry delay
+// above the barrier, still visible to clients.
 func (e *Error) WithoutPublic() *Error {
 	if e == nil {
 		return nil
@@ -244,6 +250,36 @@ func (e *Error) WithFieldViolation(field, description string) *Error {
 	// Clip so the copy never shares appendable capacity with e.violations
 	// (see With).
 	cp.violations = append(slices.Clip(e.violations), FieldViolation{Field: field, Description: description})
+	return &cp
+}
+
+// WithRetryDelay returns a copy carrying a per-error retry delay — the
+// fourth client-visible channel. Use it for dynamic server pushback, where
+// the actual wait is known at request time (a rate limiter's time to the
+// next token, the remaining quota window):
+//
+//	return errtrail.New(throttled, "bucket empty").
+//	    WithRetryDelay(limiter.NextAvailable())
+//
+// grpcerr.ToStatus emits it as the errdetails.RetryInfo detail, taking
+// precedence over the static delay registered with errtrail.RetryAfter.
+// problem deliberately does not emit it — set the Retry-After header in the
+// handler from LookupRetryDelay if you want it over HTTP.
+//
+// A non-positive d carries no recommendation ("retry after zero" is not a
+// hint) and returns the receiver unchanged. Setting a delay does NOT make
+// the code retryable — IsRetryable stays derived from the Code alone;
+// register the code with errtrail.Retryable or errtrail.RetryAfter if
+// clients should classify it as transient. Does not record a new frame.
+func (e *Error) WithRetryDelay(d time.Duration) *Error {
+	if e == nil {
+		return nil
+	}
+	if d <= 0 {
+		return e
+	}
+	cp := *e
+	cp.retryDelay = d
 	return &cp
 }
 

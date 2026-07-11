@@ -43,11 +43,13 @@ var Domain string
 // a status ships plain.
 //
 // Independent of Domain, two further details are attached when the error
-// carries the data for them: an errdetails.RetryInfo with the delay of a
-// code registered with errtrail.RetryAfter (readable on the client via
-// RetryDelay), and an errdetails.BadRequest built from the error's field
-// violations (errtrail.WithFieldViolation). Errors without that data keep
-// today's wire format exactly. If a detail cannot be attached (a proto
+// carries the data for them: an errdetails.RetryInfo with the error's own
+// delay (errtrail.WithRetryDelay — dynamic pushback, e.g. a rate limiter's
+// actual wait) or, when the error carries none, the static delay of a code
+// registered with errtrail.RetryAfter (readable on the client via
+// RetryDelay either way); and an errdetails.BadRequest built from the
+// error's field violations (errtrail.WithFieldViolation). Errors without
+// that data keep today's wire format exactly. If a detail cannot be attached (a proto
 // marshal failure — e.g. invalid UTF-8 in a user-derived violation string),
 // only that detail is dropped; the others and the status itself survive.
 //
@@ -79,9 +81,11 @@ func ToStatus(err error) *status.Status {
 
 // detailsFor collects the standard error details derived from err and its
 // resolved code: an ErrorInfo when Domain is set and the code is registered
-// (see ToStatus), a RetryInfo when the code was registered with RetryAfter,
-// and a BadRequest when the error carries field violations. The order is
-// fixed: ErrorInfo, RetryInfo, BadRequest.
+// (see ToStatus), a RetryInfo when the error carries a delay
+// (WithRetryDelay) or the code was registered with RetryAfter — the
+// error's own delay wins, dynamic pushback beating the static registry
+// hint — and a BadRequest when the error carries field violations. The
+// order is fixed: ErrorInfo, RetryInfo, BadRequest.
 func detailsFor(err error, code errtrail.Code) []protoadapt.MessageV1 {
 	var details []protoadapt.MessageV1
 	if Domain != "" {
@@ -92,7 +96,9 @@ func detailsFor(err error, code errtrail.Code) []protoadapt.MessageV1 {
 			})
 		}
 	}
-	if d, ok := code.RetryDelay(); ok {
+	if d, ok := errtrail.LookupRetryDelay(err); ok {
+		details = append(details, &errdetails.RetryInfo{RetryDelay: durationpb.New(d)})
+	} else if d, ok := code.RetryDelay(); ok {
 		details = append(details, &errdetails.RetryInfo{RetryDelay: durationpb.New(d)})
 	}
 	if vs := errtrail.FieldViolations(err); len(vs) > 0 {

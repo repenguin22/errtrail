@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewAndError(t *testing.T) {
@@ -122,6 +123,35 @@ func TestSkipNegativePanics(t *testing.T) {
 func TestSkipPastStackTopRecordsUnknown(t *testing.T) {
 	if fn := Trace(NewSkip(1000, Internal, "x"))[0].Function; fn != "unknown" {
 		t.Errorf("Function = %q, want unknown", fn)
+	}
+}
+
+func TestWithRetryDelay(t *testing.T) {
+	base := New(ResourceExhausted, "bucket empty")
+	e := base.WithRetryDelay(10 * time.Second)
+	if d, ok := LookupRetryDelay(e); !ok || d != 10*time.Second {
+		t.Errorf("LookupRetryDelay = %v, %v; want 10s, true", d, ok)
+	}
+	// Immutability: the original is untouched.
+	if _, ok := LookupRetryDelay(base); ok {
+		t.Error("WithRetryDelay must not mutate the receiver")
+	}
+}
+
+func TestWithRetryDelayNonPositiveIsNoOp(t *testing.T) {
+	// A non-positive delay carries no recommendation and leaves the error
+	// unchanged — including an already-set delay (the input is a computed
+	// value; zero must not clear an earlier hint by accident).
+	e := New(ResourceExhausted, "bucket empty")
+	if got := e.WithRetryDelay(0); got != e {
+		t.Error("WithRetryDelay(0) should return the receiver unchanged")
+	}
+	if got := e.WithRetryDelay(-time.Second); got != e {
+		t.Error("WithRetryDelay(negative) should return the receiver unchanged")
+	}
+	withDelay := e.WithRetryDelay(10 * time.Second)
+	if d, _ := LookupRetryDelay(withDelay.WithRetryDelay(0)); d != 10*time.Second {
+		t.Errorf("WithRetryDelay(0) after a set delay = %v, want 10s kept", d)
 	}
 }
 
@@ -261,6 +291,9 @@ func TestNilReceiverSafety(t *testing.T) {
 	}
 	if e.WithPublicField("a", 1) != nil {
 		t.Error("nil.WithPublicField should be nil")
+	}
+	if e.WithRetryDelay(time.Second) != nil {
+		t.Error("nil.WithRetryDelay should be nil")
 	}
 	if e.Error() != "<nil>" {
 		t.Errorf("nil.Error() = %q, want <nil>", e.Error())

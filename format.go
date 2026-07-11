@@ -12,7 +12,7 @@ import (
 //	%s, %v  same as e.Error()
 //	%q      quoted e.Error()
 //	%+v     multi-line form including code, public, public.fields,
-//	        public.violations, attrs, and trace
+//	        public.violations, public.retry, attrs, and trace
 func (e *Error) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
@@ -73,6 +73,12 @@ func (e *Error) detailed() string {
 			b.WriteByte('=')
 			b.WriteString(v.Description)
 		}
+	}
+
+	// Client-visible per-error retry delay, matching LookupRetryDelay.
+	if c.retryDelay > 0 {
+		b.WriteString("\n  public.retry: ")
+		b.WriteString(c.retryDelay.String())
 	}
 
 	if len(c.attrs) > 0 {

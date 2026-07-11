@@ -172,15 +172,22 @@ error factories (zap `AddCallerSkip` precedent), separate functions so the
 workaround. Deliberately only the two: `NewSkipf`/`WrapSkipf` were skipped —
 a factory can Sprintf itself; add them only if real demand shows up.
 
-### 5. Per-error dynamic retry delay — candidate, not scheduled
+### 5. Per-error dynamic retry delay (v1.3) — SHIPPED
 
-`WithRetryDelay(d)` on the error (review round 6, F1): would let a rate
-limiter push the *actual* time-to-next-token as `RetryInfo` instead of the
-code-registered static `RetryAfter`. The client reader (`grpcerr.RetryDelay`)
-already handles it — only the producer side is missing. Deliberately parked:
-it adds a **fourth client-visible channel** (barrier semantics, LogValue
-exclusion, and the documented "exactly three channels" contract all move),
-so it waits for a concrete use case that justifies reopening that contract.
+Shipped as core **v1.3.0** and grpcerr **v1.3.0** (2026-07-11; review round
+6 proposal F1, adopted once the rate-limiter use case was confirmed):
+`WithRetryDelay(d)` on the error lets a rate limiter push the *actual*
+time-to-next-token as `RetryInfo`, beating the code-registered static
+`RetryAfter`. Read with `LookupRetryDelay` (outermost-wins). It is the
+**fourth client-visible channel** — blocked by `WithoutPublic`, excluded
+from `LogValue`, shown as `%+v`'s `public.retry:` line; the "exactly three
+channels" contract text moved to four everywhere. Non-positive delays are a
+no-op (the input is a computed value, and "retry after zero" carries no
+recommendation — deliberately not a panic, unlike registration-time
+`RetryAfter`). `problem` still emits no `Retry-After` header — the README
+shows the two-line handler pattern via `LookupRetryDelay` instead. A
+registry delay is code configuration, not error data: it is not blocked by
+the barrier.
 
 ## Explicitly rejected (do not revisit without new evidence)
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func TestLogValueJSON(t *testing.T) {
@@ -13,7 +14,8 @@ func TestLogValueJSON(t *testing.T) {
 
 	inner := New(NotFound, "query user").WithPublic("secret public").
 		WithPublicField("client_hint", "for responses only").
-		WithFieldViolation("email", "for responses only too")
+		WithFieldViolation("email", "for responses only too").
+		WithRetryDelay(37 * time.Second)
 	err := Wrap(inner, "get profile").With(slog.Int("user_id", 42))
 
 	logger.Error("request failed", slog.Any("error", err))
@@ -45,6 +47,9 @@ func TestLogValueJSON(t *testing.T) {
 	}
 	if bytes.Contains(buf.Bytes(), []byte("for responses only too")) {
 		t.Error("field violations must not appear in logs")
+	}
+	if bytes.Contains(buf.Bytes(), []byte("37s")) || bytes.Contains(buf.Bytes(), []byte("retry")) {
+		t.Error("the retry delay must not appear in logs")
 	}
 	// trace is an array of strings.
 	tr, ok := errObj["trace"].([]any)

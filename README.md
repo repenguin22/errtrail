@@ -8,7 +8,7 @@ A Go error library for web services (HTTP / gRPC). See [DESIGN.md](DESIGN.md) fo
 - **Stdlib-only core** — the gRPC conversion is isolated in a separate `grpcerr` module.
 - **Lightweight call-site tracking** — `New` / `Wrap` each record one caller frame. No stack traces.
 - **Fully compatible with the standard `errors` package** — works with `Is` / `As` / `Unwrap` / `Join`.
-- **Internal vs. public separation** — exactly three channels reach a client (public message, public fields, field violations); internal messages and attrs stay in your logs.
+- **Internal vs. public separation** — exactly four channels reach a client (public message, public fields, field violations, retry delay); internal messages and attrs stay in your logs.
 - **`slog.LogValuer` implementation** and **RFC 9457 (Problem Details)** responses, including extension members.
 - **Same taxonomy end to end** — carry code names across gRPC and rebuild them on the calling side; retry delays (`RetryInfo`) and validation details (`BadRequest`) ride along automatically.
 
@@ -278,23 +278,23 @@ A checklist, with the reasoning behind each rule:
   override with `WithCode` when you are deliberately translating one failure into
   another (e.g. a downstream `Unavailable` you choose to surface as `Internal`).
   Beware: `WithCode` does **not** clear public data set below it — an inner
-  `WithPublic("User not found")`, `WithPublicField`, or `WithFieldViolation`
-  would still reach the client through the new response (a 403 hiding a
-  NotFound must not carry the lookup's field violations either). When the
-  point of reclassifying is to *hide* the original failure, add
-  `WithoutPublic()` — it blocks all three public channels below it — then set
+  `WithPublic("User not found")`, `WithPublicField`, `WithFieldViolation`, or
+  `WithRetryDelay` would still reach the client through the new response (a
+  403 hiding a NotFound must not carry the lookup's field violations either).
+  When the point of reclassifying is to *hide* the original failure, add
+  `WithoutPublic()` — it blocks all four public channels below it — then set
   a fresh `WithPublic` if needed. **Call it on a fresh `Wrap(err, ...)`, not
   on `err` itself**: the node you call it on keeps its *own* public data
   above the barrier, so `err.WithoutPublic()` still exposes everything
   attached directly to `err`.
-- **Keep internal and public strictly separate.** Exactly **three channels**
-  reach a client — `WithPublic`, `WithPublicField`, and `WithFieldViolation` —
-  and nothing else ever does; the internal message and `With` attrs are for
-  logs. Treat all three with the same care: a violation's field name and
-  description go verbatim into the HTTP `errors` member and the gRPC
-  `BadRequest`. When unsure whether a string is safe to expose, leave
-  `WithPublic` unset — the client gets the generic status text (HTTP) or the
-  code name (gRPC) rather than a leaked detail.
+- **Keep internal and public strictly separate.** Exactly **four channels**
+  reach a client — `WithPublic`, `WithPublicField`, `WithFieldViolation`, and
+  `WithRetryDelay` — and nothing else ever does; the internal message and
+  `With` attrs are for logs. Treat them all with the same care: a violation's
+  field name and description go verbatim into the HTTP `errors` member and
+  the gRPC `BadRequest`. When unsure whether a string is safe to expose,
+  leave `WithPublic` unset — the client gets the generic status text (HTTP)
+  or the code name (gRPC) rather than a leaked detail.
 - **Classify with `CodeOf`; match sentinels with `errors.Is`.** For "what kind of
   failure is this?" switch on `errtrail.CodeOf(err)` — errtrail deliberately does
   *not* overload `errors.Is` for codes, because implicit code matching is hard to
@@ -325,10 +325,23 @@ A checklist, with the reasoning behind each rule:
   clients as a `RetryInfo` detail. It's a *transience hint* derived only from
   the `Code` — whether replaying the request is safe (idempotency, retry
   budget, server pushback) is still your call.
+- **Push the *actual* wait with `WithRetryDelay`.** A registered `RetryAfter`
+  is a static per-code hint; a rate limiter knows the real time to the next
+  token at request time. `New(throttled, "bucket empty").WithRetryDelay(limiter.NextAvailable())`
+  ships that value as the gRPC `RetryInfo`, taking precedence over the
+  registered delay. Over HTTP, derive a `Retry-After` header in the handler —
+  `problem` deliberately doesn't emit one:
+
+  ```go
+  if d, ok := errtrail.LookupRetryDelay(err); ok {
+      w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(d.Seconds()))))
+  }
+  problem.Write(w, err)
+  ```
 
 ## Structured logging
 
-`*Error` implements `slog.LogValuer`, so passing it to `slog.Any("error", err)` nests it as a structured group instead of a flat string — as long as `err` is a `*errtrail.Error` (wrap plain errors with `errtrail.Wrap` before logging them). The public message, public fields, and field violations are deliberately left out; they're for response generation, not logs.
+`*Error` implements `slog.LogValuer`, so passing it to `slog.Any("error", err)` nests it as a structured group instead of a flat string — as long as `err` is a `*errtrail.Error` (wrap plain errors with `errtrail.Wrap` before logging them). The public message, public fields, field violations, and retry delay are deliberately left out; they're for response generation, not logs.
 
 ```go
 slog.New(slog.NewJSONHandler(os.Stdout, nil)).
@@ -416,15 +429,16 @@ mid-request.
 
 ## Benchmarks
 
-Apple M1 Pro, Go 1.26, as of v1.1. `New` / `Wrap` are still 1 alloc each,
+Apple M1 Pro, Go 1.26, as of v1.3. `New` / `Wrap` are still 1 alloc each,
 including frame recording (the struct grew with v1.1's field-violation and
-barrier support — hence 144 B, up from 96 B pre-v1.1).
+barrier support and again with v1.3's retry delay — hence 160 B, up from
+144 B in v1.1 and 96 B pre-v1.1).
 
 ```
-BenchmarkNew-10          11877836    201.8 ns/op    144 B/op   1 allocs/op
-BenchmarkWrap-10         11174144    198.5 ns/op    144 B/op   1 allocs/op
-BenchmarkWrapChain3-10    3570674    645.4 ns/op    432 B/op   3 allocs/op
-BenchmarkFormatPlusV-10   1000000   2085   ns/op   3489 B/op  25 allocs/op
+BenchmarkNew-10           7292650    156.3 ns/op    160 B/op   1 allocs/op
+BenchmarkWrap-10          7819641    156.0 ns/op    160 B/op   1 allocs/op
+BenchmarkWrapChain3-10    2377813    497.9 ns/op    480 B/op   3 allocs/op
+BenchmarkFormatPlusV-10    810685   1565   ns/op   3489 B/op  25 allocs/op
 ```
 
 ## Versioning and stability

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFormatVAndS(t *testing.T) {
@@ -38,6 +39,18 @@ func TestFormatUnknownVerbFallsBackToV(t *testing.T) {
 func TestFormatNilReceiver(t *testing.T) {
 	if got := fmt.Sprintf("%+v", (*Error)(nil)); got != "<nil>" {
 		t.Errorf("%%+v on nil = %q, want %q", got, "<nil>")
+	}
+}
+
+func TestFormatPlusVRetryDelay(t *testing.T) {
+	e := New(ResourceExhausted, "bucket empty").WithRetryDelay(37 * time.Second)
+	out := fmt.Sprintf("%+v", e)
+	if !strings.Contains(out, "\n  public.retry: 37s") {
+		t.Errorf("%%+v missing public.retry line:\n%s", out)
+	}
+	// Absent when unset.
+	if out := fmt.Sprintf("%+v", New(ResourceExhausted, "x")); strings.Contains(out, "public.retry") {
+		t.Errorf("%%+v shows public.retry without a delay:\n%s", out)
 	}
 }
 

@@ -195,6 +195,25 @@ func TestE2EAllDetailsOverWire(t *testing.T) {
 	}
 }
 
+func TestE2EDynamicRetryDelayOverWire(t *testing.T) {
+	registerE2EThrottled() // static RetryAfter(3s)
+	setDomain(t, "errtrail.test")
+
+	// The rate-limiter flow: the error carries the actual wait, which beats
+	// the registry's static hint all the way to the client's reader.
+	conn := dialE2E(t, ToError(
+		errtrail.New(e2eThrottled, "bucket empty").
+			WithRetryDelay(37*time.Second)))
+
+	wireErr := callFail(conn)
+	if d, ok := RetryDelay(wireErr); !ok || d != 37*time.Second {
+		t.Errorf("RetryDelay over the wire = (%v, %v), want the dynamic 37s, not the registered 3s", d, ok)
+	}
+	if code := errtrail.CodeOf(FromError(wireErr)); code != e2eThrottled {
+		t.Errorf("CodeOf = %v, want E2E_THROTTLED (taxonomy unaffected)", code)
+	}
+}
+
 func TestE2ESuccessPath(t *testing.T) {
 	conn := dialE2E(t, nil)
 	if err := callFail(conn); err != nil {

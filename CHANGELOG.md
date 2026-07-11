@@ -17,6 +17,23 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [Unreleased]
+
+- **Added** `(*Error).WithRetryDelay(d)` and `LookupRetryDelay(err)` — the
+  **fourth client-visible channel**, carrying a per-error dynamic retry
+  delay (a rate limiter's actual time to the next token) that
+  `grpcerr.ToStatus` emits as the `RetryInfo` detail, beating the static
+  registry delay (`RetryAfter`). Outermost delay wins; blocked below a
+  `WithoutPublic` barrier; excluded from `LogValue`; shown as `%+v`'s new
+  `public.retry:` line. A non-positive delay is a no-op — the input is a
+  computed value and "retry after zero" carries no recommendation
+  (deliberately not a panic, unlike registration-time `RetryAfter`). The
+  "exactly three channels" contract wording moves to four across the docs.
+  `problem` deliberately still emits no `Retry-After` header — the README
+  shows the two-line handler pattern via `LookupRetryDelay`.
+- **Changed** The `Error` struct grew by the delay field: construction is
+  now 160 B (was 144 B), still ~200ns / 1 alloc. README benchmarks updated.
+
 ### [v1.2.0] — 2026-07-11
 
 Additive only — no behavior changes for existing code (ROADMAP §4).
@@ -256,6 +273,16 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [Unreleased]
+
+- **Changed** The `RetryInfo` detail now prefers the error's own delay
+  (`errtrail.WithRetryDelay` — dynamic pushback) over the code's registered
+  static `RetryAfter` delay; errors without a per-error delay keep the
+  registry behavior exactly. A delay below a `WithoutPublic` barrier is not
+  exposed, while the registry delay — code configuration, not error data —
+  still applies. Pinned end-to-end over bufconn: the dynamic value reaches
+  the client's `RetryDelay` reader. Requires core ≥ v1.3.0.
 
 ### [grpcerr/v1.2.0] — 2026-07-11
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func TestCodeOfNil(t *testing.T) {
@@ -144,6 +145,56 @@ func TestLookupPublicMessage(t *testing.T) {
 	overridden := Wrap(inner, "load profile").WithPublic("Profile unavailable")
 	if msg, _ := LookupPublicMessage(overridden); msg != "Profile unavailable" {
 		t.Errorf("LookupPublicMessage(overridden) = %q, want outermost", msg)
+	}
+}
+
+func TestLookupRetryDelay(t *testing.T) {
+	if d, ok := LookupRetryDelay(nil); ok || d != 0 {
+		t.Errorf("LookupRetryDelay(nil) = %v, %v; want 0, false", d, ok)
+	}
+	if d, ok := LookupRetryDelay(errors.New("plain")); ok || d != 0 {
+		t.Errorf("LookupRetryDelay(plain) = %v, %v; want 0, false", d, ok)
+	}
+	if d, ok := LookupRetryDelay(New(Unavailable, "down")); ok || d != 0 {
+		t.Errorf("LookupRetryDelay(unset) = %v, %v; want 0, false", d, ok)
+	}
+
+	inner := New(ResourceExhausted, "bucket empty").WithRetryDelay(10 * time.Second)
+	if d, ok := LookupRetryDelay(inner); !ok || d != 10*time.Second {
+		t.Errorf("LookupRetryDelay(set) = %v, %v; want 10s, true", d, ok)
+	}
+
+	// A wrap without its own delay falls through to the inner one.
+	if d, _ := LookupRetryDelay(Wrap(inner, "call limiter")); d != 10*time.Second {
+		t.Errorf("LookupRetryDelay(wrapped) = %v, want inner 10s", d)
+	}
+
+	// The first (outermost) delay wins.
+	outer := Wrap(inner, "call limiter").WithRetryDelay(5 * time.Second)
+	if d, _ := LookupRetryDelay(outer); d != 5*time.Second {
+		t.Errorf("LookupRetryDelay(overridden) = %v, want outermost 5s", d)
+	}
+
+	// A Join visits its first branch first, like LookupPublicMessage.
+	second := New(Unavailable, "down").WithRetryDelay(3 * time.Second)
+	if d, _ := LookupRetryDelay(errors.Join(inner, second)); d != 10*time.Second {
+		t.Errorf("LookupRetryDelay(join) = %v, want first branch's 10s", d)
+	}
+}
+
+func TestLookupRetryDelayBarrier(t *testing.T) {
+	inner := New(ResourceExhausted, "bucket empty").WithRetryDelay(10 * time.Second)
+
+	// A delay below the barrier is not exposed.
+	blocked := Wrap(inner, "reclassify").WithoutPublic()
+	if d, ok := LookupRetryDelay(blocked); ok || d != 0 {
+		t.Errorf("LookupRetryDelay(below barrier) = %v, %v; want 0, false", d, ok)
+	}
+
+	// The barrier node's own delay sits above the barrier and survives.
+	own := Wrap(inner, "reclassify").WithoutPublic().WithRetryDelay(5 * time.Second)
+	if d, ok := LookupRetryDelay(own); !ok || d != 5*time.Second {
+		t.Errorf("LookupRetryDelay(own above barrier) = %v, %v; want 5s, true", d, ok)
 	}
 }
 

@@ -3,6 +3,7 @@ package errtrail
 import (
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 // walk visits every *Error in err's chain depth-first: itself, then
@@ -10,9 +11,9 @@ import (
 // first branch is visited first. Stops as soon as fn returns false.
 //
 // fn's blocked argument reports whether the node sits below a WithoutPublic
-// barrier: its public message, fields, and violations must not be exposed.
-// Only the public-data collectors consult it — code, trace, and attrs
-// ignore it.
+// barrier: its public message, fields, violations, and retry delay must not
+// be exposed. Only the public-data collectors consult it — code, trace, and
+// attrs ignore it.
 // Blocking is per subtree, so a barrier in one Join branch never blocks a
 // sibling branch (which is also why a blocked walker must keep walking
 // rather than stop: a later branch may still contribute).
@@ -183,6 +184,33 @@ func FieldViolations(err error) []FieldViolation {
 	return vs
 }
 
+// LookupRetryDelay walks err's chain from the outside in and returns the
+// first per-error retry delay set with WithRetryDelay, reporting whether one
+// was found (outermost wins; a Join visits its first branch first, like
+// LookupPublicMessage). Delays below a WithoutPublic barrier are not
+// exposed. It reads only the error — a delay registered on the Code with
+// errtrail.RetryAfter is read via (Code).RetryDelay instead; grpcerr's
+// RetryInfo emission prefers the error's delay over the registry's.
+//
+// Use it at an HTTP boundary to derive a Retry-After header (problem
+// deliberately does not emit one):
+//
+//	if d, ok := errtrail.LookupRetryDelay(err); ok {
+//	    w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(d.Seconds()))))
+//	}
+//	problem.Write(w, err)
+func LookupRetryDelay(err error) (time.Duration, bool) {
+	var d time.Duration
+	walk(err, func(e *Error, blocked bool) bool {
+		if !blocked && e.retryDelay > 0 {
+			d = e.retryDelay
+			return false
+		}
+		return true
+	})
+	return d, d > 0
+}
+
 // Trace returns the frames of every *Error in err's chain, ordered from the
 // outermost (where it was last wrapped) to the innermost (where it
 // originated). Returns nil if no *Error is found.
@@ -216,6 +244,7 @@ type collected struct {
 	attrs      []slog.Attr      // every attr, outermost to innermost
 	fields     []publicField    // every public field, outermost to innermost (duplicates kept)
 	violations []FieldViolation // every violation, outermost to innermost (matches FieldViolations)
+	retryDelay time.Duration    // first per-error retry delay, 0 if none (matches LookupRetryDelay)
 }
 
 // collect walks err's chain once, gathering the resolved code, the first
@@ -240,6 +269,9 @@ func collect(err error) collected {
 			}
 			c.fields = append(c.fields, e.fields...)
 			c.violations = append(c.violations, e.violations...)
+			if c.retryDelay == 0 && e.retryDelay > 0 {
+				c.retryDelay = e.retryDelay
+			}
 		}
 		c.trace = append(c.trace, resolveFrame(e.pc, e.msg))
 		c.attrs = append(c.attrs, e.attrs...)

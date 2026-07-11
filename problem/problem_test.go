@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/repenguin22/errtrail"
 )
@@ -307,7 +308,8 @@ func TestWriteAdversarialNeverLeaksInternals(t *testing.T) {
 		With(slog.String("user_email", "leak-attr@example.com"), slog.Int("attempt", 3)).
 		WithPublic("User not found").
 		WithPublicField("resource", "user").
-		WithFieldViolation("user_id", "unknown user")
+		WithFieldViolation("user_id", "unknown user").
+		WithRetryDelay(37 * time.Second)
 	mid := fmt.Errorf("repo layer: %w", inner)
 	sibling := errtrail.New(errtrail.Internal, "cache shard 7 corrupt")
 	outer := errtrail.Wrap(errors.Join(mid, sibling), "handle profile request")
@@ -325,6 +327,9 @@ func TestWriteAdversarialNeverLeaksInternals(t *testing.T) {
 		"query user by email", "repo layer", "cache shard", "handle profile request",
 		"user_email", "leak-attr", "attempt",
 		".go:", "problem_test", "trace",
+		// The retry delay is gRPC-only (RetryInfo); problem deliberately
+		// does not emit it — the app derives a Retry-After header itself.
+		"retry", "37s",
 	}
 	for _, s := range leaks {
 		if strings.Contains(body, s) {

@@ -1,11 +1,13 @@
 // Package problem converts errtrail errors into RFC 9457 (Problem Details
 // for HTTP APIs) JSON responses. It never includes the internal message,
-// attrs, or trace — clients only ever see the three explicitly-set public
-// channels: the public message (errtrail.LookupPublicMessage, emitted as
-// the detail member; the title carries the generic status wording), the
-// public fields (errtrail.PublicFields, emitted as extension members), and
-// the field violations (errtrail.FieldViolations, emitted as the "errors"
-// extension member).
+// attrs, or trace — clients only ever see explicitly-set public channels:
+// the public message (errtrail.LookupPublicMessage, emitted as the detail
+// member; the title carries the generic status wording), the public fields
+// (errtrail.PublicFields, emitted as extension members), and the field
+// violations (errtrail.FieldViolations, emitted as the "errors" extension
+// member). The fourth public channel, the retry delay (WithRetryDelay), is
+// deliberately not emitted — derive a Retry-After header in the handler
+// from errtrail.LookupRetryDelay if you want it over HTTP.
 package problem
 
 import (

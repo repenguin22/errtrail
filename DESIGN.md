@@ -16,14 +16,14 @@ A Go error library for web services (HTTP / gRPC).
 2. **The core depends on the standard library only.** Only the conversion to gRPC's `*status.Status` is isolated in a separate go.mod submodule, `grpcerr`.
 3. **Track the origin and propagation path of an error.** `New` / `Wrap` each record just one caller frame. No full stack traces.
 4. **Fully compatible with the standard `errors` package.** Works alongside `errors.Is` / `errors.As` / `errors.Unwrap` / `errors.Join`.
-5. **Separate internal data from client-visible data.** Exactly three explicitly-set channels ever reach a client — the public message (`WithPublic`), public extension fields (`WithPublicField`), and field violations (`WithFieldViolation`); internal messages and attrs never do.
+5. **Separate internal data from client-visible data.** Exactly four explicitly-set channels ever reach a client — the public message (`WithPublic`), public extension fields (`WithPublicField`), field violations (`WithFieldViolation`), and the retry delay (`WithRetryDelay`, gRPC `RetryInfo`); internal messages and attrs never do.
 6. **Structured logging integration.** Implements `slog.LogValuer`.
 7. **RFC 9457 (Problem Details) HTTP response generation**, provided via the `problem` subpackage.
 
 ### Non-goals (out of scope for v1)
 
 - Metadata such as a log-level hint — a retryable flag is supported as of v0.3.0 (`IsRetryable` / `Register`'s `Retryable` option, §3.3), and a retry delay as of v1.1 (`RetryAfter`, §3.3)
-- gRPC's rich `errdetails` beyond the opt-in set — `ErrorInfo` (via `grpcerr.Domain`), `RetryInfo` (via `RetryAfter`), and `BadRequest` (via `WithFieldViolation`) are attached automatically as of v1.1 (§9); anything further (LocalizedMessage, Help, ...) stays the caller's `WithDetails` job
+- gRPC's rich `errdetails` beyond the opt-in set — `ErrorInfo` (via `grpcerr.Domain`), `RetryInfo` (via `RetryAfter` / `WithRetryDelay`), and `BadRequest` (via `WithFieldViolation`) are attached automatically as of v1.1 (§9); anything further (LocalizedMessage, Help, ...) stays the caller's `WithDetails` job
 - Reverse conversion from HTTP status back to `Code` — unlike gRPC's status codes (which map to `Code` one-to-one, making `grpcerr.FromError`/`FromStatus` well-defined, §9), an HTTP status is inherently many-to-one (e.g. `400` could be `InvalidArgument`, `FailedPrecondition`, or `OutOfRange`), so a generic reverse mapping would be lossy and guess wrong as often as not
 - gRPC interceptors, HTTP middleware
 - Internationalization (i18n)
@@ -239,7 +239,7 @@ func NewSkip(skip int, code Code, msg string) *Error
 func WrapSkip(skip int, err error, msg string) *Error
 ```
 
-Frame recording captures a single pc via a shared `caller(skip)` helper — `runtime.Callers(3+skip, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself, plus any factory layers the caller asks to skip (`New`/`Wrap` pass 0). Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost to roughly 200ns / 1 alloc (as of v1.1; see the README benchmarks).
+Frame recording captures a single pc via a shared `caller(skip)` helper — `runtime.Callers(3+skip, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself, plus any factory layers the caller asks to skip (`New`/`Wrap` pass 0). Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost to roughly 200ns / 1 alloc (as of v1.3; see the README benchmarks).
 
 ### 4.2 Builder methods
 
@@ -254,10 +254,12 @@ func (e *Error) WithPublic(msg string) *Error
 
 // WithoutPublic returns a copy that acts as a public-data barrier: the
 // cause chain below the node contributes no public message, no public
-// fields, and no field violations. The node's own public data — and
-// anything added by an outer wrap — still applies; internal msg, attrs,
-// and trace are unaffected. For reclassification that must hide the
-// original failure (NotFound -> PermissionDenied).
+// fields, no field violations, and no retry delay. The node's own public
+// data — and anything added by an outer wrap — still applies; internal
+// msg, attrs, and trace are unaffected. A delay registered on the Code
+// (RetryAfter) is registry configuration, not error data — not blocked.
+// For reclassification that must hide the original failure
+// (NotFound -> PermissionDenied).
 func (e *Error) WithoutPublic() *Error
 
 // With returns a copy with the given slog.Attr values appended.
@@ -278,6 +280,18 @@ func (e *Error) WithPublicField(key string, value any) *Error
 // errdetails.BadRequest; excluded from LogValue, blocked below a
 // WithoutPublic barrier.
 func (e *Error) WithFieldViolation(field, description string) *Error
+
+// WithRetryDelay returns a copy carrying a per-error retry delay — the
+// fourth client-visible channel, for dynamic server pushback (a rate
+// limiter's actual time to the next token). grpcerr emits it as the
+// RetryInfo detail, beating the static registry delay (RetryAfter);
+// problem deliberately does not emit it (derive Retry-After in the
+// handler via LookupRetryDelay). Non-positive d is a no-op ("retry
+// after zero" carries no recommendation; the input is a computed value,
+// so it must not panic). Does NOT make the code retryable — IsRetryable
+// stays code-derived. Excluded from LogValue, blocked below a
+// WithoutPublic barrier.
+func (e *Error) WithRetryDelay(d time.Duration) *Error
 ```
 
 Every builder method and every accessor below is **nil-receiver safe** (returns nil / a zero value when called on nil). This is specified because `Wrap` can return nil, and chained calls must not panic as a result.
@@ -358,6 +372,13 @@ func PublicFields(err error) map[string]any
 // each contribute their own. Violations below a WithoutPublic barrier are
 // not collected. Returns nil if none are found.
 func FieldViolations(err error) []FieldViolation
+
+// LookupRetryDelay returns the first per-error retry delay
+// (WithRetryDelay) from the outside in, reporting whether one was found
+// (outermost wins, like LookupPublicMessage; Join first branch first).
+// Delays below a WithoutPublic barrier are not exposed. Reads only the
+// error — a registry delay is read via (Code).RetryDelay.
+func LookupRetryDelay(err error) (time.Duration, bool)
 ```
 
 ### 5.1 Frame
@@ -416,6 +437,7 @@ get profile: query user: sql: no rows in result set
   public: User not found
   public.fields: resource=user
   public.violations: user_id=does not exist
+  public.retry: 37s
   attrs: user_id=42 attempt=3
   trace:
     example.com/app/service.(*UserService).Profile (/src/app/service/user.go:88): get profile
@@ -427,6 +449,7 @@ get profile: query user: sql: no rows in result set
 - `public:` line: printed only when a public message was explicitly set (never a fallback value)
 - `public.fields:` line: omitted if no public fields; `key=value` pairs in walk order with duplicates kept (PublicFields' outermost-wins dedup applies only at response generation)
 - `public.violations:` line: omitted if no field violations; `field=description` pairs in walk order (matches FieldViolations)
+- `public.retry:` line: omitted if no per-error retry delay; the first delay from the outside in, via `time.Duration.String` (matches LookupRetryDelay)
 - `attrs:` line: omitted entirely if `Attrs(e)` is empty; `key=value` pairs separated by a single space
 - `trace:` and below: one line per Frame in `Trace(e)`, via `Frame.String()`; the whole `trace:` section is omitted if empty
 - Indentation is 2 spaces; trace entries are indented 4 spaces
@@ -449,7 +472,7 @@ Contents of the returned group:
 | `trace` | []string | `Frame.String()` for each element of `Trace(e)` |
 | (attrs) | — | `Attrs(e)`, spread directly into the group |
 
-`public`, the public fields (`WithPublicField`), and the field violations (`WithFieldViolation`) are never included in logs (logs are for internal use; all three are exclusively for response generation).
+`public`, the public fields (`WithPublicField`), the field violations (`WithFieldViolation`), and the retry delay (`WithRetryDelay`) are never included in logs (logs are for internal use; all four are exclusively for response generation).
 
 Usage example:
 
@@ -572,8 +595,9 @@ var Domain string
 // though the numeric gRPC code may be shared. Attached only for registered
 // codes (CodeByName resolves) — an unregistered code's "CODE(123)" violates
 // the Reason spec and can't round-trip, so it ships plain.
-// Independent of Domain, also attaches an errdetails.RetryInfo when the
-// code was registered with RetryAfter, and an errdetails.BadRequest built
+// Independent of Domain, also attaches an errdetails.RetryInfo carrying
+// the error's own delay (WithRetryDelay — dynamic pushback, wins) or the
+// code's registered RetryAfter delay, and an errdetails.BadRequest built
 // from the error's field violations — fixed order ErrorInfo, RetryInfo,
 // BadRequest; errors without that data keep the plain wire format. If a
 // detail cannot be attached (a proto marshal failure — e.g. invalid UTF-8

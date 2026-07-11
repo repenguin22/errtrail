@@ -5,9 +5,9 @@ import "log/slog"
 // LogValue implements slog.LogValuer. It represents the error as a group
 // value carrying the internal message, code, trace, and any attached attrs
 // into structured logs. The public message, the public fields
-// (WithPublicField), and the field violations (WithFieldViolation) are
-// deliberately left out — they're meant for response generation, not
-// internal logs.
+// (WithPublicField), the field violations (WithFieldViolation), and the
+// retry delay (WithRetryDelay) are deliberately left out — they're meant
+// for response generation, not internal logs.
 //
 // The keys "msg", "code", and "trace" are used by the group itself. An attr
 // attached via With under one of those keys is emitted alongside as a
