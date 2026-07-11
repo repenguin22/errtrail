@@ -234,7 +234,9 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [Unreleased]
+### [grpcerr/v1.1.4] — 2026-07-11
+
+Robustness fix at the wire boundary (backlog item, re-scoped by measurement).
 
 - **Fixed** A detail that proto refuses to marshal no longer takes the other
   details down with it. `ToStatus` attached ErrorInfo/RetryInfo/BadRequest in
