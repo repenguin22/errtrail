@@ -17,7 +17,9 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
-### [Unreleased]
+### [v1.1.5] — 2026-07-11
+
+Documentation only — no code change (external review round 6).
 
 - **Docs** External review round 6: `problem.Write` notes that invalid UTF-8
   in public strings is replaced with U+FFFD by encoding/json itself (the HTTP
@@ -241,7 +243,9 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [Unreleased]
+### [grpcerr/v1.1.5] — 2026-07-11
+
+Documentation and tests only — no code change (external review round 6).
 
 - **Docs** External review round 6 (measured over bufconn): an invalid-UTF-8
   **public message** sits outside v1.1.4's per-detail isolation — it lives on
