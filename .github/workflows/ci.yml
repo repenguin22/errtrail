@@ -30,13 +30,16 @@ jobs:
         run: go test -run=XXX -bench=. -benchtime=1x ./...
 
   submodules:
-    name: ${{ matrix.module }} (go stable)
+    name: ${{ matrix.module }} (go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # Submodules with their own go.mod, tested against the local core.
+        # 1.25.x verifies the submodules' go.mod floor, mirroring core's
+        # 1.22.x; stable catches regressions on the latest release.
         module: ['grpcerr', 'otelerr']
+        go-version: ['1.25.x', 'stable']
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -44,7 +47,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: ${{ matrix.go-version }}
       - name: use the local core module
         # The submodule's go.mod pins the released errtrail; point it at the
         # working tree so a core change that breaks it fails here, not after
