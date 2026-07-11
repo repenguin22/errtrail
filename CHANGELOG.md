@@ -17,7 +17,9 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
-### [Unreleased]
+### [v1.2.0] — 2026-07-11
+
+Additive only — no behavior changes for existing code (ROADMAP §4).
 
 - **Added** `NewSkip(skip, code, msg)` and `WrapSkip(skip, err, msg)` —
   caller-skip constructors for error factories (external review round 6). A
@@ -255,7 +257,9 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [Unreleased]
+### [grpcerr/v1.2.0] — 2026-07-11
+
+Frame-placement improvement (ROADMAP §4). Requires core v1.2.0.
 
 - **Changed** `FromError` / `FromStatus` record the frame at their *caller*
   (via core's new `WrapSkip(1)`), so traces start where the wire error
