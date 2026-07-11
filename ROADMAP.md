@@ -178,3 +178,11 @@ Candidates only — not scheduled; adopt when a concrete use case shows up.
   `problem.From`'s four walks and `otelerr.Record`'s three — and `From`
   additionally needs `PublicFields`' outermost-wins merge, which `collect`'s
   raw field list does not provide.
+- **Size caps, truncation, or UTF-8 sanitization of gRPC details** — the
+  library never silently rewrites client-visible data, and size is the
+  transport's budget (metadata limits kill oversized trailers long before
+  proto's ~2GB marshal ceiling; a library-side cap would be a guess about
+  someone else's deployment). The failure mode that is actually reachable —
+  a proto-unmarshalable detail, e.g. invalid UTF-8 echoed into a field
+  violation — is handled by per-detail isolation in `withDetails` instead:
+  a poisoned detail costs only itself, never the taxonomy round trip.

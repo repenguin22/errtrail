@@ -234,6 +234,19 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
+### [Unreleased]
+
+- **Fixed** A detail that proto refuses to marshal no longer takes the other
+  details down with it. `ToStatus` attached ErrorInfo/RetryInfo/BadRequest in
+  one all-or-nothing batch, so a single poisoned detail — measured: one
+  invalid-UTF-8 byte sequence in a `WithFieldViolation` description, the one
+  channel that echoes user input — stripped **all** details, silently
+  breaking the custom-code round trip (`FromError` degraded to the numeric
+  wire code) while the HTTP boundary shipped the same error fine. On batch
+  failure each detail is now retried individually, so a poisoned detail
+  costs only itself; a detail stays atomic (no partial rewriting of its
+  contents), and the status itself is still never lost.
+
 ### [grpcerr/v1.1.3] — 2026-07-11
 
 Internal hardening only — no behavior change (external review round 5).

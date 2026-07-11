@@ -390,10 +390,11 @@ func TestFromErrorPreservesCause(t *testing.T) {
 }
 
 func TestWithDetailsFallbackWhenRejected(t *testing.T) {
-	// The WithDetails-failure fallback is kept as defense against a proto
-	// marshal failure: the status itself must never be lost over details.
-	// Register no longer accepts a code mapped to gRPC OK, so trigger the
-	// rejection directly with an OK status (WithDetails always rejects OK).
+	// When every attach fails — batch and per-detail retries alike — the
+	// status itself must still survive, detail-less. Register no longer
+	// accepts a code mapped to gRPC OK, so trigger the rejection directly
+	// with an OK status (WithDetails always rejects OK, so both the batch
+	// and each individual retry fail here).
 	st := withDetails(status.New(codes.OK, ""), []protoadapt.MessageV1{
 		&errdetails.ErrorInfo{Reason: "NOT_FOUND", Domain: "errtrail.test"},
 	})
@@ -402,6 +403,66 @@ func TestWithDetailsFallbackWhenRejected(t *testing.T) {
 	}
 	if n := len(st.Details()); n != 0 {
 		t.Errorf("len(Details) = %d, want 0 (attach must fail cleanly)", n)
+	}
+}
+
+func TestWithDetailsIsolatesPoisonedDetail(t *testing.T) {
+	// A detail proto refuses to marshal (invalid UTF-8 in a proto3 string)
+	// must cost only itself: the batch attach fails, and the per-detail
+	// retries keep the healthy details in their fixed priority order.
+	poisoned := &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{
+		{Field: "name", Description: string([]byte{0xff, 0xfe}) + "user input"},
+	}}
+	st := withDetails(status.New(codes.ResourceExhausted, "slow down"), []protoadapt.MessageV1{
+		&errdetails.ErrorInfo{Reason: "RATE_LIMITED", Domain: "errtrail.test"},
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(2 * time.Second)},
+		poisoned,
+	})
+	details := st.Details()
+	if len(details) != 2 {
+		t.Fatalf("len(Details) = %d, want 2 (poisoned BadRequest dropped)", len(details))
+	}
+	if _, ok := details[0].(*errdetails.ErrorInfo); !ok {
+		t.Errorf("details[0] = %T, want *errdetails.ErrorInfo", details[0])
+	}
+	if _, ok := details[1].(*errdetails.RetryInfo); !ok {
+		t.Errorf("details[1] = %T, want *errdetails.RetryInfo", details[1])
+	}
+}
+
+func TestToStatusPoisonedViolationKeepsTaxonomy(t *testing.T) {
+	// The BadRequest channel echoes user input, so it is the one channel a
+	// client can poison with invalid UTF-8. It must not take the
+	// code-taxonomy round trip down with it: ErrorInfo and RetryInfo
+	// survive, and the client side still recovers the custom code.
+	registerThrottled()
+	setDomain(t, "errtrail.test")
+	err := errtrail.New(throttled, "bucket empty").
+		WithFieldViolation("name", string([]byte{0xff, 0xfe})+"user input")
+
+	st := ToStatus(err)
+	if st.Code() != codes.ResourceExhausted {
+		t.Errorf("Code = %v, want ResourceExhausted", st.Code())
+	}
+	details := st.Details()
+	if len(details) != 2 {
+		t.Fatalf("len(Details) = %d, want 2 (ErrorInfo + RetryInfo)", len(details))
+	}
+	info, ok := details[0].(*errdetails.ErrorInfo)
+	if !ok || info.GetReason() != "THROTTLED" {
+		t.Errorf("details[0] = %T (%v), want ErrorInfo with Reason THROTTLED", details[0], details[0])
+	}
+	if _, ok := details[1].(*errdetails.RetryInfo); !ok {
+		t.Errorf("details[1] = %T, want *errdetails.RetryInfo", details[1])
+	}
+
+	// Round trip: custom-code recovery — the library's core promise — must
+	// survive the poisoned violation, and the retry hint must still read.
+	if code := errtrail.CodeOf(FromError(st.Err())); code != throttled {
+		t.Errorf("recovered code = %v, want THROTTLED", code)
+	}
+	if d, ok := RetryDelay(st.Err()); !ok || d != 2*time.Second {
+		t.Errorf("RetryDelay = (%v, %v), want (2s, true)", d, ok)
 	}
 }
 

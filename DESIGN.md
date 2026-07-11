@@ -564,9 +564,10 @@ var Domain string
 // Independent of Domain, also attaches an errdetails.RetryInfo when the
 // code was registered with RetryAfter, and an errdetails.BadRequest built
 // from the error's field violations — fixed order ErrorInfo, RetryInfo,
-// BadRequest; errors without that data keep the plain wire format. If
-// details cannot be attached (a proto marshal failure), the plain status is
-// returned instead; the status itself is never lost.
+// BadRequest; errors without that data keep the plain wire format. If a
+// detail cannot be attached (a proto marshal failure — e.g. invalid UTF-8
+// in a user-derived violation string), only that detail is dropped; the
+// others and the status itself survive.
 // Returns status.New(codes.OK, "") when err is nil.
 func ToStatus(err error) *status.Status
 

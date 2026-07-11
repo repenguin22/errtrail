@@ -47,8 +47,9 @@ var Domain string
 // code registered with errtrail.RetryAfter (readable on the client via
 // RetryDelay), and an errdetails.BadRequest built from the error's field
 // violations (errtrail.WithFieldViolation). Errors without that data keep
-// today's wire format exactly. If the details cannot be attached (a proto
-// marshal failure), the plain status is returned instead.
+// today's wire format exactly. If a detail cannot be attached (a proto
+// marshal failure — e.g. invalid UTF-8 in a user-derived violation string),
+// only that detail is dropped; the others and the status itself survive.
 //
 // Returns status.New(codes.OK, "") when err is nil. Never includes the
 // internal message, attrs, or trace. Callers who need other details can
@@ -100,16 +101,25 @@ func detailsFor(err error, code errtrail.Code) []protoadapt.MessageV1 {
 	return details
 }
 
-// withDetails attaches details to st. If they cannot be attached
-// (WithDetails rejects OK statuses and surfaces proto marshal failures),
-// the plain status is returned instead — never lose the status itself over
-// details.
+// withDetails attaches details to st. The batch attach is tried first (one
+// call on the happy path); if it fails (WithDetails rejects OK statuses and
+// surfaces proto marshal failures — e.g. invalid UTF-8 in a user-derived
+// violation string, which proto3 refuses to marshal), each detail is
+// retried individually so a poisoned detail costs only itself, in the fixed
+// priority order (ErrorInfo, RetryInfo, BadRequest). A detail is atomic —
+// its contents are never partially rewritten. The status itself is never
+// lost over details.
 func withDetails(st *status.Status, details []protoadapt.MessageV1) *status.Status {
 	detailed, err := st.WithDetails(details...)
-	if err != nil {
-		return st
+	if err == nil {
+		return detailed
 	}
-	return detailed
+	for _, d := range details {
+		if next, err := st.WithDetails(d); err == nil {
+			st = next
+		}
+	}
+	return st
 }
 
 // ToError returns ToStatus(err).Err(), for returning directly from a gRPC
