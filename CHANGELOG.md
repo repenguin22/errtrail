@@ -17,7 +17,10 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
-### [Unreleased]
+### [v1.1.4] — 2026-07-11
+
+A display fix plus review-round docs and tests (Gemini finding 3; external
+review round 5).
 
 - **Fixed** `Frame.String()` no longer renders a bogus `" (:0)"` location for
   unresolved frames (both `File` and `Line` zero — e.g. the `"unknown"`
@@ -231,7 +234,9 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [Unreleased]
+### [grpcerr/v1.1.3] — 2026-07-11
+
+Internal hardening only — no behavior change (external review round 5).
 
 - **Changed** `FromStatus` guards `nil` explicitly instead of relying on
   grpc's undocumented nil-receiver behavior of `Status.Err`/`Code`/`Details`.
