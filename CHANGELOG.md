@@ -17,7 +17,10 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
-### [Unreleased]
+### [v1.3.0] — 2026-07-11
+
+Additive API only — no behavior change for existing code; construction
+allocation grows one size class (ROADMAP §5).
 
 - **Added** `(*Error).WithRetryDelay(d)` and `LookupRetryDelay(err)` — the
   **fourth client-visible channel**, carrying a per-error dynamic retry
@@ -274,7 +277,9 @@ changes that would have been breaking after v1.0.
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
 
-### [Unreleased]
+### [grpcerr/v1.3.0] — 2026-07-11
+
+Dynamic retry pushback (ROADMAP §5). Requires core v1.3.0.
 
 - **Changed** The `RetryInfo` detail now prefers the error's own delay
   (`errtrail.WithRetryDelay` — dynamic pushback) over the code's registered
