@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 )
 
 // Error is errtrail's core error type. It is immutable — there is no API to
@@ -47,13 +48,13 @@ type FieldViolation struct {
 
 // New creates a new error, recording one caller frame.
 func New(code Code, msg string) *Error {
-	return &Error{code: code, msg: msg, pc: caller()}
+	return &Error{code: code, msg: msg, pc: caller(0)}
 }
 
 // Newf is the fmt.Sprintf form of New. %w is not supported here (use Wrap to
 // wrap an error).
 func Newf(code Code, format string, args ...any) *Error {
-	return &Error{code: code, msg: fmt.Sprintf(format, args...), pc: caller()}
+	return &Error{code: code, msg: fmt.Sprintf(format, args...), pc: caller(0)}
 }
 
 // Wrap wraps err, recording one caller frame. The code is left unset (OK),
@@ -73,7 +74,7 @@ func Wrap(err error, msg string) *Error {
 	if err == nil {
 		return nil
 	}
-	return &Error{msg: msg, cause: err, pc: caller()}
+	return &Error{msg: msg, cause: err, pc: caller(0)}
 }
 
 // Wrapf is the fmt.Sprintf form of Wrap. Returns nil when err is nil (see
@@ -82,7 +83,39 @@ func Wrapf(err error, format string, args ...any) *Error {
 	if err == nil {
 		return nil
 	}
-	return &Error{msg: fmt.Sprintf(format, args...), cause: err, pc: caller()}
+	return &Error{msg: fmt.Sprintf(format, args...), cause: err, pc: caller(0)}
+}
+
+// NewSkip is New for error factories: it skips `skip` additional stack
+// frames when recording the caller frame, so a helper that constructs
+// errors on behalf of its own caller can point the frame at that caller
+// instead of at itself.
+//
+//	func notFound(msg string) *errtrail.Error {
+//	    return errtrail.NewSkip(1, errtrail.NotFound, msg)
+//	}
+//
+// skip = 0 is exactly New; skip = 1 records the factory's caller; each
+// further wrapper layer adds one. A skip past the top of the stack records
+// the "unknown" frame. Panics if skip is negative.
+func NewSkip(skip int, code Code, msg string) *Error {
+	if skip < 0 {
+		panic("errtrail: NewSkip requires a non-negative skip, got " + strconv.Itoa(skip))
+	}
+	return &Error{code: code, msg: msg, pc: caller(skip)}
+}
+
+// WrapSkip is Wrap for error factories (see NewSkip for the skip contract).
+// Returns nil when err is nil, with Wrap's typed-nil caveat. Panics if skip
+// is negative.
+func WrapSkip(skip int, err error, msg string) *Error {
+	if skip < 0 {
+		panic("errtrail: WrapSkip requires a non-negative skip, got " + strconv.Itoa(skip))
+	}
+	if err == nil {
+		return nil
+	}
+	return &Error{msg: msg, cause: err, pc: caller(skip)}
 }
 
 // WithCode returns a copy with the code replaced. Does not record a new frame.

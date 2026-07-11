@@ -35,6 +35,19 @@ func ExampleWrap() {
 	// true
 }
 
+func ExampleNewSkip() {
+	// An error factory: skip=1 records the factory's caller, so traces
+	// point at the code that hit the error, not at the factory itself.
+	notFound := func(msg string) *errtrail.Error {
+		return errtrail.NewSkip(1, errtrail.NotFound, msg)
+	}
+
+	err := notFound("user 42 missing")
+	fmt.Println(errtrail.CodeOf(err), "-", err)
+	// Output:
+	// NOT_FOUND - user 42 missing
+}
+
 func ExampleWrap_nil() {
 	// Wrap(nil) returns a nil *Error, so chained builder calls are safe.
 	var noErr error

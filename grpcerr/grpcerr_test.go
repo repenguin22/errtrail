@@ -235,6 +235,19 @@ func TestFromErrorRoundTripBuiltin(t *testing.T) {
 	}
 }
 
+func TestFromErrorFrameAtCaller(t *testing.T) {
+	// The recorded frame belongs to the caller of FromError / FromStatus
+	// (this test), not to grpcerr's internals — WrapSkip(1) since v1.2.0.
+	got := FromError(ToError(errtrail.New(errtrail.NotFound, "x")))
+	if fn := errtrail.Trace(got)[0].Function; !strings.Contains(fn, "TestFromErrorFrameAtCaller") {
+		t.Errorf("FromError frame = %q, want its caller (this test)", fn)
+	}
+	fromSt := FromStatus(status.New(codes.Unavailable, "down"))
+	if fn := errtrail.Trace(fromSt)[0].Function; !strings.Contains(fn, "TestFromErrorFrameAtCaller") {
+		t.Errorf("FromStatus frame = %q, want its caller (this test)", fn)
+	}
+}
+
 func TestFromErrorRecoversCustomCode(t *testing.T) {
 	registerRateLimited()
 	setDomain(t, "errtrail.test")

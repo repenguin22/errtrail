@@ -162,6 +162,26 @@ under the SemVer promise:
 
 Candidates only — not scheduled; adopt when a concrete use case shows up.
 
+### 4. Caller-skip constructors (v1.2) — SHIPPED
+
+Shipped as core **v1.2.0** and grpcerr **v1.2.0** (2026-07-11, external
+review round 6 proposal): `NewSkip` / `WrapSkip` — skip-aware variants for
+error factories (zap `AddCallerSkip` precedent), separate functions so the
+`New`/`Wrap` hot path is untouched. `grpcerr.FromError` / `FromStatus` use
+`WrapSkip(1)` internally, retiring the documented "wrap at the call site"
+workaround. Deliberately only the two: `NewSkipf`/`WrapSkipf` were skipped —
+a factory can Sprintf itself; add them only if real demand shows up.
+
+### 5. Per-error dynamic retry delay — candidate, not scheduled
+
+`WithRetryDelay(d)` on the error (review round 6, F1): would let a rate
+limiter push the *actual* time-to-next-token as `RetryInfo` instead of the
+code-registered static `RetryAfter`. The client reader (`grpcerr.RetryDelay`)
+already handles it — only the producer side is missing. Deliberately parked:
+it adds a **fourth client-visible channel** (barrier semantics, LogValue
+exclusion, and the documented "exactly three channels" contract all move),
+so it waits for a concrete use case that justifies reopening that contract.
+
 ## Explicitly rejected (do not revisit without new evidence)
 
 - **Full stack traces (opt-in or otherwise)** — one frame per wrap is the

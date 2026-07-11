@@ -17,6 +17,18 @@ without a major version bump. See
 
 ## errtrail (core) — `github.com/repenguin22/errtrail`
 
+### [Unreleased]
+
+- **Added** `NewSkip(skip, code, msg)` and `WrapSkip(skip, err, msg)` —
+  caller-skip constructors for error factories (external review round 6). A
+  helper like `apperr.NotFound(msg)` built on plain `New` records its own
+  line in every trace; `skip=1` points the frame at the factory's caller
+  instead (zap `AddCallerSkip` precedent). Separate functions, so the
+  `New`/`Wrap` hot path is unchanged. `skip=0` is exactly `New`/`Wrap`; a
+  skip past the top of the stack records the `"unknown"` frame; a negative
+  skip panics. Core coverage reaches 100% — the over-skip test exercises
+  the previously unreachable `caller()` failure branch.
+
 ### [v1.1.5] — 2026-07-11
 
 Documentation only — no code change (external review round 6).
@@ -242,6 +254,15 @@ changes that would have been breaking after v1.0.
 ---
 
 ## errtrail/grpcerr — `github.com/repenguin22/errtrail/grpcerr`
+
+### [Unreleased]
+
+- **Changed** `FromError` / `FromStatus` record the frame at their *caller*
+  (via core's new `WrapSkip(1)`), so traces start where the wire error
+  entered your code. The documented workaround — "the frame points inside
+  grpcerr; wrap the result at the call site" — is retired; an existing
+  `errtrail.Wrap` at the call site keeps working and simply adds one more
+  frame. Requires core ≥ v1.2.0.
 
 ### [grpcerr/v1.1.5] — 2026-07-11
 

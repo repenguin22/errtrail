@@ -226,9 +226,20 @@ func Wrap(err error, msg string) *Error
 
 // Wrapf is the fmt.Sprintf form of Wrap. Likewise returns nil when err is nil.
 func Wrapf(err error, format string, args ...any) *Error
+
+// NewSkip is New for error factories: it skips `skip` additional stack
+// frames when recording the caller frame, so a helper constructing errors
+// on behalf of its own caller points the frame at that caller. skip=0 is
+// exactly New; a skip past the top of the stack records the "unknown"
+// frame; a negative skip panics.
+func NewSkip(skip int, code Code, msg string) *Error
+
+// WrapSkip is Wrap for error factories (same skip contract as NewSkip,
+// same nil/typed-nil behavior as Wrap).
+func WrapSkip(skip int, err error, msg string) *Error
 ```
 
-Frame recording captures a single pc via a shared `caller()` helper — `runtime.Callers(3, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself. Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost to roughly 200ns / 1 alloc (as of v1.1; see the README benchmarks).
+Frame recording captures a single pc via a shared `caller(skip)` helper — `runtime.Callers(3+skip, pc[:1])`, skipping `runtime.Callers`, `caller`, and the constructor itself, plus any factory layers the caller asks to skip (`New`/`Wrap` pass 0). Resolving it to `file:line` is deferred until display time (`runtime.CallersFrames`). This keeps construction cost to roughly 200ns / 1 alloc (as of v1.1; see the README benchmarks).
 
 ### 4.2 Builder methods
 
@@ -590,8 +601,8 @@ func ToError(err error) error
 // additionally requires the Domain to match one of the given domains. The
 // wire message survives via the wrapped cause; it is NOT re-published as
 // the public message (call WithPublic explicitly to propagate it). The
-// recorded frame points inside grpcerr — wrap at the call site for a
-// caller frame.
+// recorded frame points at FromError's caller (WrapSkip(1), since
+// grpcerr v1.2.0).
 func FromError(err error, opts ...FromOption) *errtrail.Error
 
 // FromStatus is FromError for a *status.Status you already hold.

@@ -28,14 +28,16 @@ func (f Frame) String() string {
 	return s
 }
 
-// caller returns the pc of the user code that called a New/Newf/Wrap/Wrapf
-// constructor. Returns 0 on failure. It must be called directly from those
-// constructors, since the skip count assumes exactly that call depth.
-func caller() uintptr {
+// caller returns the pc of the user code that called a constructor, plus
+// skip additional frames above it (0 for the direct call site). Returns 0
+// on failure, including a skip past the top of the stack. It must be called
+// directly from the constructors, since the base skip count assumes exactly
+// that call depth.
+func caller(skip int) uintptr {
 	var pcs [1]uintptr
 	// Skip 3 frames: runtime.Callers, caller, and the constructor itself,
-	// leaving the user's own call site.
-	if runtime.Callers(3, pcs[:]) < 1 {
+	// leaving the user's own call site; skip walks further up from there.
+	if runtime.Callers(3+skip, pcs[:]) < 1 {
 		return 0
 	}
 	return pcs[0]

@@ -312,6 +312,12 @@ A checklist, with the reasoning behind each rule:
 - **Use `Newf`/`Wrapf` only for the internal message.** Interpolated request data
   belongs in `With` attrs (queryable in logs) or `WithPublicField`, not baked into
   a message string.
+- **Building an error factory? Use `NewSkip` / `WrapSkip`.** A helper like
+  `apperr.NotFound(msg)` built on plain `New` records its own line in every
+  trace, so all errors appear to originate at the factory. `NewSkip(1, ...)`
+  skips the factory layer and points the frame at the real call site — `skip`
+  counts wrapper layers, like zap's `AddCallerSkip`. (`grpcerr.FromError` does
+  this internally, so its frame is your call site too.)
 - **Retry on `IsRetryable`, not a hand-maintained list.** Built-ins `Unavailable`,
   `DeadlineExceeded`, `ResourceExhausted`, and `Aborted` are retryable; custom
   codes opt in with `errtrail.Register(c, name, httpStatus, grpcCode, errtrail.Retryable())`

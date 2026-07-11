@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,67 @@ func TestWrapfFormatsMessage(t *testing.T) {
 	}
 	if !errors.Is(e, base) {
 		t.Error("errors.Is should find base through Unwrap")
+	}
+}
+
+// newSkipFactory stands in for an application error factory: the frame it
+// records must point at ITS caller, not at this function.
+func newSkipFactory(msg string) *Error {
+	return NewSkip(1, NotFound, msg)
+}
+
+func wrapSkipFactory(err error, msg string) *Error {
+	return WrapSkip(1, err, msg)
+}
+
+func TestSkipZeroEqualsPlainConstructors(t *testing.T) {
+	direct := Trace(New(NotFound, "x"))[0].Function
+	if got := Trace(NewSkip(0, NotFound, "x"))[0].Function; got != direct {
+		t.Errorf("NewSkip(0) frame = %q, want %q (same as New)", got, direct)
+	}
+	base := errors.New("base")
+	directW := Trace(Wrap(base, "x"))[0].Function
+	if got := Trace(WrapSkip(0, base, "x"))[0].Function; got != directW {
+		t.Errorf("WrapSkip(0) frame = %q, want %q (same as Wrap)", got, directW)
+	}
+}
+
+func TestSkipOnePointsAtFactoryCaller(t *testing.T) {
+	if fn := Trace(newSkipFactory("missing"))[0].Function; !strings.Contains(fn, "TestSkipOnePointsAtFactoryCaller") {
+		t.Errorf("NewSkip(1) frame = %q, want the factory's caller (this test)", fn)
+	}
+	w := wrapSkipFactory(errors.New("base"), "ctx")
+	if fn := Trace(w)[0].Function; !strings.Contains(fn, "TestSkipOnePointsAtFactoryCaller") {
+		t.Errorf("WrapSkip(1) frame = %q, want the factory's caller (this test)", fn)
+	}
+}
+
+func TestWrapSkipNilReturnsNil(t *testing.T) {
+	if WrapSkip(1, nil, "x") != nil {
+		t.Error("WrapSkip(nil) should be nil")
+	}
+}
+
+func TestSkipNegativePanics(t *testing.T) {
+	cases := map[string]func(){
+		"NewSkip":  func() { NewSkip(-1, Internal, "x") },
+		"WrapSkip": func() { WrapSkip(-1, errors.New("b"), "x") },
+	}
+	for name, fn := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("expected a panic on negative skip")
+				}
+			}()
+			fn()
+		})
+	}
+}
+
+func TestSkipPastStackTopRecordsUnknown(t *testing.T) {
+	if fn := Trace(NewSkip(1000, Internal, "x"))[0].Function; fn != "unknown" {
+		t.Errorf("Function = %q, want unknown", fn)
 	}
 }
 

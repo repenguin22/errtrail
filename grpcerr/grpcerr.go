@@ -187,15 +187,16 @@ func TrustedDomain(domains ...string) FromOption {
 // are not turned back into public data on the returned error — a
 // downstream's BadRequest violations are its clients' business, not
 // automatically yours; read a RetryInfo delay with RetryDelay. The recorded
-// frame points inside grpcerr — wrap the result with errtrail.Wrap at the
-// call site to add a caller frame.
+// frame points at FromError's caller, so traces start where the wire error
+// entered your code.
 func FromError(err error, opts ...FromOption) *errtrail.Error {
 	if err == nil {
 		return nil
 	}
 	// Non-status errors yield status.New(codes.Unknown, err.Error()).
 	st, _ := status.FromError(err)
-	return errtrail.Wrap(err, "").WithCode(codeFromStatus(st, foldFromOptions(opts)))
+	// skip 1: the frame belongs to FromError's caller, not to grpcerr.
+	return errtrail.WrapSkip(1, err, "").WithCode(codeFromStatus(st, foldFromOptions(opts)))
 }
 
 // FromStatus is FromError for a *status.Status you already hold. Returns
@@ -208,7 +209,8 @@ func FromStatus(st *status.Status, opts ...FromOption) *errtrail.Error {
 	if st == nil {
 		return nil
 	}
-	return errtrail.Wrap(st.Err(), "").WithCode(codeFromStatus(st, foldFromOptions(opts)))
+	// skip 1: the frame belongs to FromStatus's caller, not to grpcerr.
+	return errtrail.WrapSkip(1, st.Err(), "").WithCode(codeFromStatus(st, foldFromOptions(opts)))
 }
 
 // foldFromOptions applies opts onto a zero fromOptions.
